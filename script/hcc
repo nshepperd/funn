@@ -1,0 +1,78 @@
+#!/usr/bin/python2
+# This is a tup run-script that simplifies compiling haskell with ghc.
+# Unlike C, the compilation of haskell sources isn't independent, because
+# the interface is stored together with the implementation. The compilation
+# of a haskell source (.hs) file produces a .hi file (analogous to C headers)
+# which other sources might depend on.
+# So this script scans each of the inputs for dependencies on each other,
+# and outputs the tup build commands in topological sort order
+# with dependencies included.
+import argparse
+import sys, os
+import re
+
+re_import = re.compile(r'^import +(?:qualified +)?([\w\.]+)')
+
+def getdeps(sources, search):
+    deps = {src : set() for src in sources}
+
+    def add_dep(src, path):
+        for canonical in sources:
+            if os.path.samefile(canonical, path + '.hs'):
+                deps[src].add(canonical[:-3])
+                return
+        # external dependency
+        deps[src].add(path)
+
+    # Scan each input file for 'import' lines that create dependencies on other inputs
+    for src in sources:
+        with open(src, 'r') as file:
+            for line in file:
+                if re_import.match(line):
+                    dep = re_import.match(line).group(1)
+                    dep = dep.replace('.', '/')
+                    for sea in search:
+                        path = os.path.relpath(os.path.join(sea, dep), '.')
+                        if os.path.exists(path + '.hs'):
+                            add_dep(src, path)
+
+    return deps
+
+def loop(src, visited, deps, order):
+    visited.add(src)
+    if src not in deps:
+        return
+    for dep in deps[src]:
+        if dep + '.hs' not in visited:
+            loop(dep + '.hs', visited, deps, order)
+    order.append(src)
+
+def escape(string):
+    return "'" + string.replace("'", r"'\''") + "'"
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-i', dest='search', action='append', help = 'Source search path')
+    parser.add_argument('sources', nargs='+')
+    args = parser.parse_args()
+
+    search = args.search or ['.']
+    sources = args.sources
+
+    assert all(s.endswith('.hs') for s in sources)
+
+    deps = getdeps(sources, search)
+
+    # Topological sort, by depth first search
+    visited = set()
+    order = []
+    for src in sources:
+        if src not in visited:
+            loop(src, visited, deps, order)
+
+    for src in order:
+        if deps[src]:
+            print ': {src} | {deps} |> !ghcc {search} |>'.format(src=src, deps=' '.join(d + '.hi' for d in deps[src]),
+                                                                 search=' '.join('-i{}'.format(escape(s)) for s in search))
+        else:
+            print ': {src} |> !ghcc |>'.format(src=src)

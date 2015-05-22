@@ -1,0 +1,3 @@
+HSROOT=$(TUP_CWD)
+include script/rules
+.gitignore

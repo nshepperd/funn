@@ -1,0 +1,14 @@
+#!/bin/bash
+find_sandbox() {
+    local ROOT=${PWD}
+    while [[ "$ROOT" != / ]]; do
+	if [[ -e "${ROOT}/cabal.sandbox.config" ]] ; then
+	    local GLOBAL=$(ghc --print-libdir)/package.conf.d
+	    local LOCAL=$(grep package-db ${ROOT}/cabal.sandbox.config | grep -o '/.*$')
+	    echo "GHC_PACKAGE_PATH=${LOCAL}:${GLOBAL}"
+	fi
+	ROOT=$(dirname $ROOT)
+    done
+}
+
+exec env $(find_sandbox) "$@"

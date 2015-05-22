@@ -1,0 +1,5 @@
+#!/bin/bash
+HSROOT=$1
+GLOBAL=$(ghc --print-libdir)/package.conf.d
+LOCAL=$(grep package-db ${HSROOT}/cabal.sandbox.config | grep -o '/.*$')
+echo "GHC_PACKAGE_PATH=${LOCAL}:${GLOBAL}"
