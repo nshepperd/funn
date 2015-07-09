@@ -43,17 +43,10 @@ main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
 
-  let network :: forall n. (KnownNat n) => Network Identity (Blob n) (Blob 1)
-      network = fcLayer >>> (fcLayer :: Network Identity (Blob 3) (Blob 1))
-      network1 :: Network Identity (Blob 2) (Blob 1)
-      network1 = network
-      network2 :: Network Identity SBlob (Blob 1)
-      network2 = weakenL 2 network
+  withNat 2 (\(Proxy :: Proxy n) -> do
+                let network :: Network Identity (Blob n) (Blob 1)
+                    network = fcLayer >>> (fcLayer :: Network Identity (Blob 3) (Blob 1))
 
-  params <- sampleIO (initialise network1)
-  print params
-  print $ runNetwork network1 params (blob [1, 2])
-
-  params2 <- sampleIO (initialise network2)
-  print params2
-  print $ runNetwork network2 params2 (SBlob (V.fromList [1, 2]))
+                params <- sampleIO (initialise network)
+                print params
+                print $ runNetwork network params (blob [1, 2]))
