@@ -31,7 +31,7 @@ instance (KnownNat n) => VectorSpace (Blob n) where
   unit = Blob (V.replicate n 0)
     where n = natInt (Proxy :: Proxy n)
 
-instance (KnownNat n) => NeuralData (Blob n) where
+instance Derivable (Blob n) where
   type D (Blob n) = Blob n
 
 instance NFData (Blob n) where

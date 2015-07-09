@@ -3,7 +3,7 @@
 module AI.Funn.Network (
   Parameters(..),
   VectorSpace(..),
-  NeuralData(..),
+  Derivable(..),
   Network(..),
   runNetwork, runNetwork',
   left, right, (>>>)
@@ -56,16 +56,16 @@ instance VectorSpace () where
   unit = ()
 
 
-class (VectorSpace (D a)) => NeuralData a where
+class Derivable a where
   type family D a :: *
 
-instance (NeuralData a, NeuralData b) => NeuralData (a, b) where
+instance (Derivable a, Derivable b) => Derivable (a, b) where
   type D (a, b) = (D a, D b)
 
-instance NeuralData () where
+instance Derivable () where
   type D () = ()
 
-instance NeuralData Int where
+instance Derivable Int where
   type D Int = ()
 
 -- NETWORK
