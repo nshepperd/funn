@@ -2,7 +2,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
 module AI.Funn.Flat (Blob(..),
-                     fcLayer, preluLayer, mergeLayer,
+                     fcLayer, preluLayer, mergeLayer, sigmoidLayer,
                      quadraticCost, softmaxCost, generateBlob) where
 
 import           GHC.TypeLits
@@ -77,6 +77,17 @@ preluLayer = Network ev 1 (pure $ Parameters $ V.singleton 0.5)
                                        dα = V.singleton $ V.sum $ V.zipWith (*) δ (V.map (min 0) input)
                                    in return (Blob di, [Parameters dα])
           in return (Blob output, 0, backward)
+
+sigmoidLayer :: (Monad m, KnownNat n) => Network m (Blob n) (Blob n)
+sigmoidLayer = Network ev 0 (pure mempty)
+  where
+    ev _ (Blob !input) =
+          let output = V.map σ input
+              backward (Blob !δ) = let di = V.zipWith (\y δ -> y * (1 - y) * δ) output δ
+                                   in return (Blob di, [])
+          in return (Blob output, 0, backward)
+
+    σ x = exp x / (1 + exp x)
 
 splitBlob :: forall a b. (KnownNat a, KnownNat b) => Blob (a + b) -> (Blob a, Blob b)
 splitBlob (Blob xs) = (Blob (V.take s1 xs), Blob (V.drop s1 xs))

@@ -6,7 +6,8 @@ module AI.Funn.Network (
   Derivable(..),
   Network(..),
   runNetwork, runNetwork',
-  left, right, (>>>)
+  left, right, (>>>),
+  assocL, assocR
   ) where
 
 import           Control.Applicative
@@ -68,6 +69,9 @@ instance Derivable () where
 instance Derivable Int where
   type D Int = ()
 
+instance Derivable Parameters where
+  type D Parameters = Parameters
+
 -- NETWORK
 
 data Network m a b = Network {
@@ -101,6 +105,18 @@ right net = Network ev (params net) (initialise net)
                        let backward (dc, db) = do (da, dpar) <- k db
                                                   return ((dc,da), dpar)
                        return ((c,b), cost, backward)
+
+assocL :: (Monad m) => Network m (a,(b,c)) ((a,b),c)
+assocL = Network ev 0 (pure mempty)
+  where
+    ev _ (a,(b,c)) = do let backward ((da,db),dc) = return ((da,(db,dc)), [])
+                        return (((a,b),c), 0, backward)
+
+assocR :: (Monad m) => Network m ((a,b),c) (a,(b,c))
+assocR = Network ev 0 (pure mempty)
+  where
+    ev _ ((a,b),c) = do let backward (da,(db,dc)) = return (((da,db),dc), [])
+                        return ((a,(b,c)), 0, backward)
 
 connect :: (Monad m) => Network m a b -> Network m b c -> Network m a c
 connect one two = Network ev (params one + params two) (liftA2 (<>) (initialise one) (initialise two))
