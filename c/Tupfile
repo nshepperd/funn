@@ -1,0 +1,2 @@
+include_rules
+: foreach *.c |> clang -O3 -c -o %o %f -std=c99 -fPIC |> %B.o

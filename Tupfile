@@ -3,4 +3,4 @@ include_rules
 GHC_LDFLAGS=-package vector -package random-fu -package reinterpret-cast -package hmatrix
 
 run $(HCC) ./*.hs
-: foreach *.o | AI/Funn/*.o |> !ghc AI/Funn/*.o |> %B
+: foreach *.o | AI/Funn/*.o c/*.o |> !ghc AI/Funn/*.o c/*.o |> %B

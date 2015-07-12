@@ -27,6 +27,7 @@ import qualified Numeric.LinearAlgebra.HMatrix as HM
 import           AI.Funn.Flat
 import           AI.Funn.Network
 import           AI.Funn.SomeNat
+import           AI.Funn.LSTM
 
 type Layer = Network Identity
 
@@ -50,3 +51,12 @@ main = do
                 params <- sampleIO (initialise network)
                 print params
                 print $ runNetwork network params (blob [1, 2]))
+
+  let network :: Network Identity (Blob 1, Blob 4) (Blob 1, Blob 1)
+      network = lstmLayer
+      network' = network >>> quadraticCost
+
+  params <- sampleIO (initialise network)
+  print params
+  print $ runNetwork network params (blob [1], blob [0.3, 0.3, 0.2, 0.5])
+  print $ runNetwork' network' params (blob [1], blob [0.3, 0.3, 0.2, 0.5])
