@@ -46,16 +46,18 @@ instance Monoid Parameters where
 
 class VectorSpace d where
   (##) :: d -> d -> d
+  scale :: Double -> d -> d
   unit :: d
 
 instance (VectorSpace a, VectorSpace b) => VectorSpace (a, b) where
   (a1, b1) ## (a2, b2) = (a1 ## a2, b1 ## b2)
+  scale v (a, b) = (scale v a, scale v b)
   unit = (unit, unit)
 
 instance VectorSpace () where
   () ## () = ()
+  scale _ x = x
   unit = ()
-
 
 class Derivable a where
   type family D a :: *

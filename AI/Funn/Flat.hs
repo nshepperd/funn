@@ -27,7 +27,8 @@ natInt :: (KnownNat n) => proxy n -> Int
 natInt p = fromIntegral (natVal p)
 
 instance (KnownNat n) => VectorSpace (Blob n) where
-  (Blob a) ## (Blob b) = Blob (V.zipWith (+) a b)
+  (Blob a) ## (Blob b) = Blob (a + b)
+  scale v (Blob x) = Blob (HM.scale v x)
   unit = Blob (V.replicate n 0)
     where n = natInt (Proxy :: Proxy n)
 
