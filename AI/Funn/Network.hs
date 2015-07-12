@@ -20,13 +20,13 @@ import           Data.Functor.Identity
 import qualified Data.Binary as B
 import           Data.Random
 import qualified Data.Vector.Generic as V
-import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector.Storable as S
 
 import           Control.DeepSeq
 
 import           AI.Funn.Common
 
-newtype Parameters = Parameters { getParameters :: U.Vector Double } deriving (Show, Read)
+newtype Parameters = Parameters { getParameters :: S.Vector Double } deriving (Show, Read)
 
 instance NFData Parameters where
   rnf (Parameters v) = rnf v

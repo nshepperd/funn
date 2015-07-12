@@ -46,15 +46,14 @@ fcLayer :: forall n1 n2 m. (Monad m, KnownNat n1, KnownNat n2) => Network m (Blo
 fcLayer = Network ev numpar initial
   where
     ev (Parameters p) (Blob !input) =
-      let ws = V.slice 0 (from*to) p
-          w = HM.reshape from (V.convert ws)
-          bs = V.convert (V.slice (from*to) to p)
+      let w = HM.reshape from (V.slice 0 (from*to) p)
+          bs = V.slice (from*to) to p
           output = V.zipWith (+) (w HM.#> input) bs
           backward (Blob !δ) =
-            let da = HM.tr w HM.#> δ
-                dw = V.convert (HM.flatten (δ `HM.outer` input))
-                db = V.convert δ
-            in return (Blob da, [Parameters dw, Parameters db])
+            let da = Blob $ HM.tr w HM.#> δ
+                dw = Parameters $ HM.flatten (δ `HM.outer` input)
+                db = Parameters $ δ
+            in return (da, [dw, db])
       in return (Blob output, 0, backward)
     numpar = from * to + to
     initial = do let σ = sqrt $ 2 / sqrt (fromIntegral (from * to))
