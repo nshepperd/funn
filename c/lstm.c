@@ -60,7 +60,7 @@ void lstm_backward(const int n, const double* ws, const double* store, const dou
     const double dx = dh_add * g_i;
     const double dg_i = dh_add * x;
     const double dg_f = dh_keep * h_old;
-    const double dh_old = dh_keep * dg_f;
+    const double dh_old = dh_keep * g_f;
 
     d_ws[0] = dws_keep;
     d_ws[1] = dws_add;
