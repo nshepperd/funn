@@ -2,7 +2,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
 module AI.Funn.Flat (Blob(..),
-                     fcLayer, preluLayer, mergeLayer, sigmoidLayer,
+                     fcLayer, preluLayer, mergeLayer, sigmoidLayer, splitLayer,
                      quadraticCost, softmaxCost, generateBlob) where
 
 import           GHC.TypeLits
@@ -103,6 +103,12 @@ mergeLayer = Network ev 0 (pure mempty)
   where ev _ (!a, !b) =
           let backward δ = return (splitBlob δ, mempty)
           in return (concatBlob a b, 0, backward)
+
+splitLayer :: (Monad m, KnownNat a, KnownNat b) => Network m (Blob (a + b)) (Blob a, Blob b)
+splitLayer = Network ev 0 (pure mempty)
+  where ev _ ab =
+          let backward (da, db) = return (concatBlob da db, mempty)
+          in return (splitBlob ab, 0, backward)
 
 ssq :: HM.Vector Double -> Double
 ssq xs = V.sum $ V.map (\x -> x*x) xs
