@@ -94,6 +94,8 @@ checkGradient network = do parameters <- sampleIO (initialise network)
     a = fromIntegral (natVal (Proxy :: Proxy a)) :: Int
     ε = 0.000001
 
+type N = 10
+
 main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
@@ -107,15 +109,15 @@ main = do
   --               print $ runNetwork network params (blob [1, 2]))
 
   let
-    layer :: Network Identity ((Blob 100, Blob 100), Blob 256) (Blob 100, Blob 100)
+    layer :: Network Identity ((Blob N, Blob N), Blob 256) (Blob N, Blob N)
     layer = assocR >>> right (mergeLayer >>> fcLayer >>> sigmoidLayer) >>> lstmLayer
             -- (left fcLayer >>> right fcLayer :: Network Identity (Blob 1, Blob 4) (Blob 1, Blob 1))
-            -- (lstmLayer :: Network Identity (Blob 100, Blob 40) (Blob 100, Blob 100))
+            -- (lstmLayer :: Network Identity (Blob N, Blob 40) (Blob N, Blob N))
 
-    -- layer = layerWithSize (Proxy :: Proxy 100)
+    -- layer = layerWithSize (Proxy :: Proxy N)
 
-    final :: Network Identity ((Blob 100, Blob 100), Int) ()
-    final = left (mergeLayer >>> (fcLayer :: Network Identity (Blob 200) (Blob 256))) >>> softmaxCost
+    final :: Network Identity ((Blob N, Blob N), Int) ()
+    final = left (mergeLayer >>> (fcLayer :: Network Identity (Blob (2*N)) (Blob 256))) >>> softmaxCost
 
   p_layer <- sampleIO (initialise layer)
   p_final <- sampleIO (initialise final)
