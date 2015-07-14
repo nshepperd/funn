@@ -70,6 +70,15 @@ lstmLayer = Network eval numpar init
     eval par (hidden, inputs) = let (new_h, new_y, store) = (lstmForward n (getParameters par)
                                                              (getBlob hidden)
                                                              (getBlob inputs))
+                                    !_ = if any isNaN (V.toList new_h) then
+                                           error ("NaN: new_h " ++ show (par, hidden, inputs))
+                                         else ()
+                                    !_ = if any isNaN (V.toList new_y) then
+                                           error ("NaN: new_y " ++ show (par, hidden, inputs))
+                                         else ()
+                                    !_ = if any isNaN (V.toList store) then
+                                           error ("NaN: store " ++ show (par, hidden, inputs))
+                                         else ()
                                     backward (dh, dy) = let (d_ws, d_hs, d_xs) = (lstmBackward n (getParameters par)
                                                                                     store (getBlob dh) (getBlob dy))
                                                         in return ((Blob d_hs, Blob d_xs), [Parameters d_ws])

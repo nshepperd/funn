@@ -50,6 +50,9 @@ fcLayer = Network ev numpar initial
       let w = HM.reshape from (V.slice 0 (from*to) p)
           bs = V.slice (from*to) to p
           output = V.zipWith (+) (w HM.#> input) bs
+          !_ = if any isNaN (V.toList output) then
+                 error $ "NaN: fcLayer output " ++ show (w, bs, input)
+               else ()
           backward (Blob !δ) =
             let da = Blob $ HM.tr w HM.#> δ
                 dw = Parameters $ HM.flatten (δ `HM.outer` input)
@@ -84,11 +87,14 @@ sigmoidLayer = Network ev 0 (pure mempty)
   where
     ev _ (Blob !input) =
           let output = V.map σ input
+              !_ = if any isNaN (V.toList output) then
+                     error $ "NaN: sigmoidLayer output " ++ show (input)
+               else ()
               backward (Blob !δ) = let di = V.zipWith (\y δ -> y * (1 - y) * δ) output δ
                                    in return (Blob di, [])
           in return (Blob output, 0, backward)
 
-    σ x = exp x / (1 + exp x)
+    σ x = if x < 0 then exp x / (1 + exp x) else 1 / (1 + exp (-x))
 
 splitBlob :: forall a b. (KnownNat a, KnownNat b) => Blob (a + b) -> (Blob a, Blob b)
 splitBlob (Blob xs) = (Blob (V.take s1 xs), Blob (V.drop s1 xs))
