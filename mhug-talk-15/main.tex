@@ -1,0 +1,172 @@
+\documentclass[10pt]{beamer}
+\usepackage{textcomp}
+\usepackage{minted}
+
+\usetheme{m}
+\title{Funn: Functional Neural Networks in Haskell}
+\subtitle{(even neural networks involve category theory)}
+\date{\today}
+\author{Neil Shepperd}
+
+\begin{document}
+\maketitle
+
+%% \section{The Problem}
+
+\begin{frame}{The Problem}
+  A neural network should...
+  \pause
+  \begin{enumerate}
+  \item Take some input \pause
+  \item Take some parameters \pause
+  \item Produce an output \pause
+  \item Produce a gradient
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}{The Solution}
+  Didn't I just describe the space of differentiable functions? \\
+  There's an ekmett library for that\texttrademark \pause --- \textbf{ad}.
+
+  Great, we can all go home.
+
+  Except...
+  \pause
+
+  The performance on thousands of variables is not so great.
+\end{frame}
+
+\begin{frame}{Differentiable Functions}
+  Let's backtrack-
+
+  Differentiable functions \emph{do} form a category.
+
+  \[ \frac{d}{dx} \text{id}(x) = 1 \]
+  \[ \frac{d}{dx} (g \circ f)(x) = f'(x) g'(f(x)) \]
+\end{frame}
+
+\begin{frame}[fragile]{A Category}
+  So let's build a category interface.
+
+  \begin{minted}{haskell}
+data Network a b = ...
+
+id :: Network a a
+(>>>) :: Network a b -> Network b c -> Network a c
+  \end{minted}
+\end{frame}
+
+\begin{frame}[fragile]{Networks}
+  I spent quite a while experimenting with different designs.
+
+  Still not finished yet. But right now:
+
+  \begin{minted}{haskell}
+    newtype Parameters = Parameters (S.Vector Double)
+    class Derivable s where
+        type family D s :: *
+    data Network m a b = Network {
+      evaluate :: Parameters -> a -> m (b, Double,
+                        D b -> m (D a, [D Parameters])),
+      params :: Int,
+      initialise :: RVar Parameters
+    }
+  \end{minted}
+
+  Monad, allowing effects -- eg. randomness: dropout units!.
+
+  Take parameters, return output together with contribution to loss function and a continuation to calculate gradient on the way back.
+\end{frame}
+
+%% \begin{frame}[fragile]{I'm not done}
+%%   Most of this stuff not necessary:
+
+%%   \begin{minted}{haskell}
+%%     data Network m a b = Network {
+%%       evaluate :: a -> m (b, D b -> m (D a))
+%%     }
+%%   \end{minted}
+
+%%   could suffice.
+%% \end{frame}
+
+\begin{frame}[fragile]{Category Interface}
+  \begin{minted}{haskell}
+data Network m a b = ...
+
+id :: Network m a a
+(>>>) :: Network m a b -> Network m b c -> Network m a c
+  \end{minted}
+\end{frame}
+
+\begin{frame}[fragile]{Category Interface -- id}
+  \begin{minted}{haskell}
+    id :: (Monad m) => Network m a a
+    id = Network ev 0 (return mempty)
+     where
+      ev _ a = return (a, 0, backward)
+      backward b = return (b, [])
+  \end{minted}
+\end{frame}
+
+\begin{frame}[fragile]{Category Interface -- ($>>>$)}
+  \begin{minted}{haskell}
+(>>>) :: (Monad m) => Network m a b -> Network m b c -> Network m a c
+(>>>) one two = Network ev (params one + params two) ...
+    where ev (Parameters par) !a =
+      do let par1 = Parameters (V.take (params one) par)
+             par2 = Parameters (V.drop (params one) par)
+         (!b, !cost1, !k1) <- evaluate one par1 a
+         (!c, !cost2, !k2) <- evaluate two par2 b
+         let backward !dc = do (!db, dpar2) <- k2 dc
+                               (!da, dpar1) <- k1 db
+                               return (da, dpar1 <> dpar2)
+         return (c, cost1 + cost2, backward)
+  \end{minted}
+\end{frame}
+
+\begin{frame}[fragile]{Monoidal Category}
+  We're really a sort of monoidal category:
+
+  \begin{minted}{haskell}
+    left :: Network m a b -> Network m (a,c) (b,c)
+    right :: Network m a b -> Network m (c,a) (c,b)
+    (***) :: Network m a b -> Network m c d ->
+              Network m (a,c) (b,d)
+    assocL :: Network m (a,(b,c)) ((a,b),c)
+    assocR :: Network m ((a,b),c) (a,(b,c))
+    swap :: Network m (a,b) (b,a)
+  \end{minted}
+
+\end{frame}
+
+\begin{frame}[fragile]{Statically Checked Dimensions}
+  \begin{minted}{haskell}
+    import GHC.TypeLits
+    import qualified Data.Vector.Storable as S
+    data Blob (n :: Nat) = Blob { getBlob :: S.Vector Double }
+
+    fcLayer :: Network m (Blob n1) (Blob n2)
+    sigmoidLayer :: Network m (Blob n) (Blob n)
+    quadraticCost :: Network m (Blob n, Blob n) ()
+    crossEntropyCost :: Network m (Blob n, Blob n) ()
+  \end{minted}
+
+  Type-level nats -- dimensions for each layer can also be inferred
+\end{frame}
+
+\begin{frame}[fragile]{Using this}
+  \begin{minted}{haskell}
+    type Layer = Network Identity
+    let network :: Layer (Blob 2) (Blob 1)
+        network = (fcLayer :: Layer (Blob 2) (Blob 3) >>>
+                  sigmoidLayer                        >>>
+                  (fcLayer :: Layer (Blob 3) (Blob 1))
+
+    let training :: Layer (Blob 2, Blob 1) ()
+        training = left network >>> quadraticCost
+  \end{minted}
+\end{frame}
+
+
+\end{document}
