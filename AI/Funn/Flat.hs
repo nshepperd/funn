@@ -1,6 +1,7 @@
 {-# LANGUAGE TypeFamilies, KindSignatures, DataKinds, TypeOperators #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
 module AI.Funn.Flat (Blob(..),
                      fcLayer, preluLayer, mergeLayer, sigmoidLayer, splitLayer,
                      quadraticCost, softmaxCost, generateBlob) where
@@ -16,11 +17,17 @@ import           Data.Random
 
 import           Control.DeepSeq
 import qualified Data.Vector.Generic as V
+import qualified Data.Vector.Storable as S
+import qualified Data.Vector.Storable.Mutable as M
 import qualified Numeric.LinearAlgebra.HMatrix as HM
+
+import           Foreign.C
+import           Foreign.Ptr
+import           System.IO.Unsafe
 
 import           AI.Funn.Network
 
-newtype Blob (n :: Nat) = Blob { getBlob :: HM.Vector Double }
+newtype Blob (n :: Nat) = Blob { getBlob :: S.Vector Double }
                         deriving (Show)
 
 natInt :: (KnownNat n) => proxy n -> Int
@@ -55,7 +62,7 @@ fcLayer = Network ev numpar initial
                else ()
           backward (Blob !δ) =
             let da = Blob $ HM.tr w HM.#> δ
-                dw = Parameters $ HM.flatten (δ `HM.outer` input)
+                dw = Parameters $ (δ `flat_outer` input)
                 db = Parameters $ δ
             in return (da, [dw, db])
       in return (Blob output, 0, backward)
@@ -134,3 +141,21 @@ softmaxCost = Network ev 0 (pure mempty)
                 backward _ = let back = V.imap (\j x -> exp(x - ltotal) - if target == j then 1 else 0) o
                              in return ((Blob back, ()), mempty)
             in return ((), cost, backward)
+
+
+
+
+foreign import ccall "outer_product" outer_product :: CInt -> CInt -> Ptr Double -> Ptr Double -> Ptr Double -> IO ()
+
+{-# NOINLINE flat_outer #-}
+flat_outer :: S.Vector Double -> S.Vector Double -> S.Vector Double
+flat_outer u v = unsafePerformIO go
+  where
+    go = do target <- M.new (n*m) :: IO (M.IOVector Double)
+            S.unsafeWith u $ \ubuf -> do
+              S.unsafeWith v $ \vbuf -> do
+                M.unsafeWith target $ \tbuf -> do
+                  outer_product (fromIntegral n) (fromIntegral m) ubuf vbuf tbuf
+            V.unsafeFreeze target
+    n = V.length u
+    m = V.length v
