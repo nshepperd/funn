@@ -1,7 +1,8 @@
-module AI.Funn.RNN (runRNN, runRNNIO, rnn) where
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
+module AI.Funn.RNN (runRNN, runRNNIO, rnn) where
 
 import           Control.Applicative
 import           Control.Monad
@@ -57,8 +58,33 @@ addParameters (Parameters x) (Parameters y) = Parameters (x + y)
 scaleParameters :: Double -> Parameters -> Parameters
 scaleParameters x (Parameters y) = Parameters (HM.scale x y)
 
-rnn :: (Monad m) => Network m (s,i) s -> [i] -> Network m s s
-rnn layer inputs = Network ev (params layer) (initialise layer)
+instance Derivable a => Derivable (Vector a) where
+  type D (Vector a) = Vector (D a)
+
+rnn :: (Monad m) => Network m (s,i) s -> Network m (s, Vector i) s
+rnn layer = Network ev (params layer) (initialise layer)
+  where
+    ev pars (s, inputs) = do (s', k) <- go pars s (V.toList inputs)
+                             let n = V.length (inputs)
+                                 backward ds' = do
+                                   (ds, dis, dpar) <- k ds'
+                                   return ((ds, V.fromList dis), [scaleParameters (1 / fromIntegral n) dpar])
+                             return (s', 0, backward)
+
+    go pars s [] = let backward ds = return (ds, [], Parameters (V.replicate p 0))
+                   in return (s, backward)
+    go pars s (i:is) = do (s1, _, k1) <- evaluate layer pars (s,i)
+                          (s', k') <- go pars s1 is
+                          let backward ds' = do
+                                (ds1, dis, dpar_rest) <- k' ds'
+                                ((ds, di), dpar_1) <- k1 ds1
+                                return (ds, di : dis, dpar_rest `addTo` dpar_1)
+                          return (s', backward)
+
+    p = params layer
+
+rnn_ :: (Monad m) => Network m (s,i) s -> [i] -> Network m s s
+rnn_ layer inputs = Network ev (params layer) (initialise layer)
   where
     ev params s = do (new_s, k) <- go params s inputs
                      let backward ds_new = do
