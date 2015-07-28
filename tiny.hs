@@ -14,6 +14,8 @@ import           Data.Traversable
 import           Data.Word
 import           System.Environment
 
+import           Options.Applicative
+
 import           Data.Map (Map)
 import qualified Data.Map.Strict as Map
 
@@ -139,6 +141,12 @@ sampleRNN n s layer p_layer final p_final = go s n
                     one' = left swap >>> assocR >>> right one >>> assocL >>> left swap
                 in one' >>> two'
 
+data Options = Options {
+  initial :: Maybe FilePath,
+  input :: FilePath,
+  output :: FilePath
+  } deriving (Show)
+
 type N = 10
 type Hidden = (Blob N, Blob N)
 
@@ -147,6 +155,12 @@ type LayerH h a b = Network Identity (h, a) (h, b)
 main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
+
+  opts <- execParser (info (Options
+                            <$> optional (strOption (long "initial"))
+                            <*> strOption (long "input")
+                            <*> strOption (long "output"))
+                      fullDesc)
 
   let
     -- layer :: Network Identity ((Blob N, Blob N), Blob 256) (Blob N, Blob N)
@@ -170,10 +184,15 @@ main = do
     -- experiment :: Network Identity ((Blob N, Blob N), Vector (Blob 256)) (Blob 256)
     -- experiment = rnn layer >>> finalx
 
-  p_layer <- sampleIO (initialise layer)
-  p_final <- sampleIO (initialise final)
+  let fname = input opts
+      savefile = output opts
 
-  [fname, savefile] <- getArgs
+  (initial, p_layer, p_final) <- case initial opts of
+    Just path -> read <$> readFile path
+    Nothing -> (,,)
+               <$> pure ((unit, unit), unit)
+               <*> sampleIO (initialise layer)
+               <*> sampleIO (initialise final)
 
   text <- B.readFile fname
 
@@ -181,8 +200,6 @@ main = do
   running_average <- newIORef 0
 
   let
-    initial = ((unit, unit), unit)
-
     oneofn :: Vector (Blob 256)
     oneofn = V.generate 256 (\i -> blob (replicate i 0 ++ [1] ++ replicate (255 - i) 0))
 
@@ -209,6 +226,8 @@ main = do
   deepseqM (tvec, ovec)
 
   descent initial layer p_layer final p_final source save
+
+
 
   -- (inputs, o) <- source
   -- checkGradient $ splitLayer >>> rnn layer inputs >>> feedR o final

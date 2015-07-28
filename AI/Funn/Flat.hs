@@ -28,7 +28,7 @@ import           System.IO.Unsafe
 import           AI.Funn.Network
 
 newtype Blob (n :: Nat) = Blob { getBlob :: S.Vector Double }
-                        deriving (Show)
+                        deriving (Show, Read)
 
 natInt :: (KnownNat n) => proxy n -> Int
 natInt p = fromIntegral (natVal p)
