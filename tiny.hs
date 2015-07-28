@@ -259,7 +259,7 @@ main = do
   p_layer <- sampleIO (initialise layer)
   p_final <- sampleIO (initialise final)
 
-  [fname] <- getArgs
+  [fname, savefile] <- getArgs
 
   text <- B.readFile fname
 
@@ -288,12 +288,7 @@ main = do
         x <- readIORef running_average
         putStrLn $ show i ++ " " ++ show x ++ " " ++ show c
       when (i `mod` 1000 == 0) $ do
-        -- let (Parameters xs) = p_final
-        --     ps = V.map exp $ V.slice (V.length xs - 256) 256 xs
-        --     normed = V.map (/ V.sum ps) ps
-        -- writeFile "goo" $ unlines ([show j ++ " " ++ show x | (j, x) <- zip [0..] (V.toList normed)])
-        -- print normed
-        -- writeFile "save.params" $ show (init, p_layer, p_final)
+        writeFile savefile $ show (init, p_layer, p_final)
         test <- sampleRNN 100 init layer p_layer finalx p_final
         putStrLn test
 
