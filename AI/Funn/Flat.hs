@@ -64,9 +64,6 @@ fcLayer = Network ev numpar initial
             let da = Blob $ HM.tr w HM.#> δ
                 dw = Parameters $ (δ `flat_outer` input)
                 db = Parameters $ δ
-                !_ = if any (\x -> isNaN x || isInfinite x) (V.toList (getParameters dw)) then
-                       error $ "(fcLayer) NaN in dw " ++ show δ
-                       else ()
             in return (da, [dw, db])
       in return (Blob output, 0, backward)
     numpar = from * to + to
