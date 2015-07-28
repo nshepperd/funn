@@ -1,4 +1,4 @@
-module AI.Funn.RNN (runRNN, runRNN', runRNNIO, rnn) where
+module AI.Funn.RNN (runRNN, runRNNIO, rnn) where
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
@@ -77,18 +77,6 @@ rnn layer inputs = Network ev (params layer) (initialise layer)
 
     n = length inputs
     p = params layer
-
-
-
-runRNN' :: (Monad m) => s -> Network m (s,i) s -> Parameters -> Network m (s,o) () -> Parameters -> [i] -> o -> m (Double, D s, D Parameters, D Parameters)
-runRNN' s layer p_layer final p_final [] o = do ((), cost, k) <- evaluate final p_final (s, o)
-                                                ((ds, _), l_dp_final) <- k ()
-                                                return (cost, ds, Parameters (V.replicate (params layer) 0), fold l_dp_final)
-runRNN' s layer p_layer final p_final (i:is) o = do (s_new, _, k) <- evaluate layer p_layer (s, i)
-                                                    (cost, ds, dp_layer, dp_final) <- runRNN' s_new layer p_layer final p_final is o
-                                                    ((ds2, _), l_dp_layer2) <- k ds
-                                                    let dp_layer2 = fold l_dp_layer2
-                                                    return (cost, ds2, dp_layer `addParameters` dp_layer2, dp_final)
 
 runRNN :: (Monad m) => s -> Network m (s,i) s -> Parameters -> Network m (s,o) () -> Parameters -> [i] -> o -> m (Double, D s, D Parameters, D Parameters)
 runRNN s_init layer p_layer final p_final inputs o = do (c, ds, d_layer, d_final) <- go s_init inputs
