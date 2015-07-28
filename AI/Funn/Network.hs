@@ -5,7 +5,7 @@ module AI.Funn.Network (
   VectorSpace(..),
   Derivable(..),
   Network(..),
-  runNetwork, runNetwork',
+  runNetwork, runNetwork', runNetwork_,
   left, right, (>>>),
   assocL, assocR
   ) where
@@ -82,6 +82,10 @@ data Network m a b = Network {
   params :: Int,
   initialise :: RVar Parameters
   }
+
+runNetwork_ :: Network Identity a b -> Parameters -> a -> b
+runNetwork_ network params a = let Identity (b, _, _) = evaluate network params a in b
+
 
 runNetwork :: Network Identity a b -> Parameters -> a -> (b, Double)
 runNetwork network params a = let Identity (b, c, _) = evaluate network params a
