@@ -117,7 +117,6 @@ checkGradient network = do parameters <- sampleIO (initialise network)
     a = fromIntegral (natVal (Proxy :: Proxy a)) :: Int
     ε = 0.000001
 
-type N = 10
 
 sampleRNN :: Int -> s -> Network Identity (s, Blob 256) s -> Parameters -> Network Identity s (Blob 256) -> Parameters -> IO String
 sampleRNN n s layer p_layer final p_final = go s n
@@ -135,19 +134,41 @@ sampleRNN n s layer p_layer final p_final = go s n
     oneofn :: Vector (Blob 256)
     oneofn = V.generate 256 (\i -> blob (replicate i 0 ++ [1] ++ replicate (255 - i) 0))
 
+(>&>) :: (Monad m) => Network m (x1,a) (x2,b) -> Network m (y1,b) (y2,c) -> Network m ((x1,y1), a) ((x2,y2), c)
+(>&>) one two = let two' = assocR >>> right two >>> assocL
+                    one' = left swap >>> assocR >>> right one >>> assocL >>> left swap
+                in one' >>> two'
+
+type N = 10
+type Hidden = (Blob N, Blob N)
+
+type LayerH h a b = Network Identity (h, a) (h, b)
+
 main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
 
   let
-    layer :: Network Identity ((Blob N, Blob N), Blob 256) (Blob N, Blob N)
-    layer = assocR >>> right (mergeLayer >>> fcLayer >>> sigmoidLayer) >>> lstmLayer
+    -- layer :: Network Identity ((Blob N, Blob N), Blob 256) (Blob N, Blob N)
+    -- layer = assocR >>> right (mergeLayer >>> fcLayer >>> sigmoidLayer) >>> lstmLayer
 
-    finalx :: Network Identity (Blob N, Blob N) (Blob 256)
-    finalx = mergeLayer >>> fcLayer
+    layer1 :: LayerH (Blob N) (Blob N, Blob 256) (Blob N)
+    layer1 = right (mergeLayer >>> fcLayer >>> sigmoidLayer) >>> lstmLayer
 
-    final :: Network Identity ((Blob N, Blob N), Int) ()
+    layer2 :: LayerH (Blob N) (Blob N) (Blob N)
+    layer2 = right (fcLayer >>> sigmoidLayer) >>> lstmLayer
+
+    layer :: Layer (((Blob N, Blob N), Blob N), Blob 256) ((Blob N, Blob N), Blob N)
+    layer = assocR >>> (layer1 >&> layer2)
+
+    finalx :: Network Identity (Hidden, Blob N) (Blob 256)
+    finalx = left mergeLayer >>> mergeLayer >>> fcLayer
+
+    final :: Network Identity ((Hidden, Blob N), Int) ()
     final = left finalx >>> softmaxCost
+
+    -- experiment :: Network Identity ((Blob N, Blob N), Vector (Blob 256)) (Blob 256)
+    -- experiment = rnn layer >>> finalx
 
   p_layer <- sampleIO (initialise layer)
   p_final <- sampleIO (initialise final)
@@ -160,7 +181,7 @@ main = do
   running_average <- newIORef 0
 
   let
-    initial = (unit, unit)
+    initial = ((unit, unit), unit)
 
     oneofn :: Vector (Blob 256)
     oneofn = V.generate 256 (\i -> blob (replicate i 0 ++ [1] ++ replicate (255 - i) 0))
