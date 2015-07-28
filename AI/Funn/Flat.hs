@@ -64,13 +64,18 @@ fcLayer = Network ev numpar initial
             let da = Blob $ HM.tr w HM.#> δ
                 dw = Parameters $ (δ `flat_outer` input)
                 db = Parameters $ δ
+                !_ = if any (\x -> isNaN x || isInfinite x) (V.toList (getParameters dw)) then
+                       error $ "(fcLayer) NaN in dw " ++ show δ
+                       else ()
             in return (da, [dw, db])
       in return (Blob output, 0, backward)
     numpar = from * to + to
     initial = do let σ = sqrt $ 2 / sqrt (fromIntegral (from * to))
                  ws <- V.replicateM (from * to) (normal 0 σ)
+                 let (u,_,v) = HM.thinSVD (HM.reshape from ws)
+                     m = HM.flatten (u <> HM.tr v) -- orthogonal initialisation
                  bs <- V.replicateM to (pure 0)
-                 return $ Parameters (ws <> bs)
+                 return $ Parameters (m <> bs)
     from = natInt (Proxy :: Proxy n1)
     to   = natInt (Proxy :: Proxy n2)
 
@@ -141,8 +146,6 @@ softmaxCost = Network ev 0 (pure mempty)
                 backward _ = let back = V.imap (\j x -> exp(x - ltotal) - if target == j then 1 else 0) o
                              in return ((Blob back, ()), mempty)
             in return ((), cost, backward)
-
-
 
 
 foreign import ccall "outer_product" outer_product :: CInt -> CInt -> Ptr Double -> Ptr Double -> Ptr Double -> IO ()
