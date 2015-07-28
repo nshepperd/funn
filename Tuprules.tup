@@ -1,3 +1,5 @@
 HSROOT=$(TUP_CWD)
+GHC_FLAGS=-O3
+#  -auto-all -prof
 include script/rules
 .gitignore

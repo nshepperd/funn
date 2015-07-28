@@ -6,3 +6,10 @@ void outer_product(int n, int m, const double* input_u, const double* input_v, d
     }
   }
 }
+
+void vector_add(int n, double* target, const double* source) {
+  for(int i = 0; i < n; i++) {
+    *target += *source;
+    target++; source++;
+  }
+}
