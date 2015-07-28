@@ -7,7 +7,7 @@ module AI.Funn.Network (
   Network(..),
   runNetwork, runNetwork', runNetwork_,
   left, right, (>>>),
-  assocL, assocR
+  assocL, assocR, swap
   ) where
 
 import           Control.Applicative
@@ -123,6 +123,11 @@ assocR = Network ev 0 (pure mempty)
   where
     ev _ ((a,b),c) = do let backward (da,(db,dc)) = return (((da,db),dc), [])
                         return ((a,(b,c)), 0, backward)
+
+swap :: (Monad m) => Network m (a,b) (b,a)
+swap = Network ev 0 (pure mempty)
+  where
+    ev _ (a,b) = return ((b,a), 0, \(db,da) -> return ((da,db), []))
 
 connect :: (Monad m) => Network m a b -> Network m b c -> Network m a c
 connect one two = Network ev (params one + params two) (liftA2 (<>) (initialise one) (initialise two))
