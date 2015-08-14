@@ -4,7 +4,7 @@
 
 \usetheme{m}
 \title{Funn: Functional Neural Networks in Haskell}
-\subtitle{(even neural networks involve category theory)}
+\subtitle{(everything's a category)}
 \date{\today}
 \author{Neil Shepperd}
 
@@ -24,9 +24,14 @@
   \end{enumerate}
 \end{frame}
 
-\begin{frame}{The Solution}
+\begin{frame}[fragile]{The Solution}
   Didn't I just describe the space of differentiable functions? \\
   There's an ekmett library for that\texttrademark \pause --- \textbf{ad}.
+
+  \begin{minted}{haskell}
+    > diff sin 0
+    1.0
+  \end{minted}
 
   Great, we can all go home.
 
