@@ -24,6 +24,7 @@ import           Data.Coerce
 import           Debug.Trace
 import           GHC.TypeLits
 import           System.IO
+import           System.IO.Unsafe
 
 import           Data.Functor.Identity
 import           Data.Random
@@ -40,6 +41,7 @@ import           AI.Funn.Flat
 import           AI.Funn.LSTM
 import           AI.Funn.Network
 import           AI.Funn.RNN
+import           AI.Funn.SGD
 import           AI.Funn.SomeNat
 
 type Layer = Network Identity
@@ -62,6 +64,45 @@ scaleParameters x (Parameters y) = Parameters (HM.scale x y)
 norm :: Parameters -> Double
 norm (Parameters xs) = sqrt $ V.sum $ V.map (^2) xs
 
+descent' :: (VectorSpace s, s ~ (D s), Derivable s) => s -> Network Identity (s,i) s -> Parameters -> Network Identity (s,o) () -> Parameters -> IO (Vector i, Vector o) -> (Int -> s -> Parameters -> Parameters -> Double -> IO ()) -> IO ()
+descent' initial_s layer p_layer_initial final p_final_initial source save = go initial_s p_layer_initial p_final_initial (0::Int) (Nothing, Nothing, Nothing)
+  where
+    go !s !p_layer !p_final !i (m_s, m_layer, m_final) = do
+      (is, os) <- source
+      let
+        -- mid :: Network Identity s (Vector s)
+        mid = feedR (V.init is) (rnnBig layer)
+        -- loss :: Network Identity (Vector s, Vector c) ()
+        loss = zipWithNetwork_ final
+        lf = (-0.01) :: Double
+        ff = (-0.01) :: Double
+        Identity (ss, _,    kl) = evaluate mid p_layer s
+        Identity ((), cost, kf) = evaluate loss p_final (ss,os)
+        Identity ((dss, _), [dp_final]) = kf ()
+        Identity (ds, [dp_layer]) = kl dss
+
+      -- let Identity (cost, ds, dp_layer, dp_final) = runRNN s layer p_layer final p_final is o
+      let
+        gpn = abs $ norm dp_layer / norm p_layer
+      when (i `mod` 100 == 0) $ do
+        putStrLn $ "grad/param norm: " ++ show gpn
+      save i s p_layer p_final cost
+      let
+        -- (new_s, new_m_s) = let δ = case m_s of
+        --                             Just m -> scale (-0.01) ds ## scale (0.9) m
+        --                             Nothing -> scale (-0.01) ds
+        --                    in (s ## δ, Just δ)
+        (new_p_layer, new_m_layer) = momentum lf p_layer dp_layer m_layer
+        (new_p_final, new_m_final) = momentum ff p_final dp_final m_final
+      go s new_p_layer new_p_final (i+1) (m_s, new_m_layer, new_m_final)
+
+    momentum :: Double -> Parameters -> Parameters -> Maybe Parameters -> (Parameters, Maybe Parameters)
+    momentum f par d_par m_par = let δ = case m_par of
+                                          Just m -> scaleParameters f d_par `addParameters` scaleParameters 0.9 m
+                                          Nothing -> scaleParameters f d_par
+                                 in (par `addParameters` δ, Just δ)
+
+
 descent :: (VectorSpace s, s ~ (D s), Derivable s) => s -> Network Identity (s,i) s -> Parameters -> Network Identity (s,o) () -> Parameters -> IO ([i], o) -> (Int -> s -> Parameters -> Parameters -> Double -> IO ()) -> IO ()
 descent initial_s layer p_layer_initial final p_final_initial source save = go initial_s p_layer_initial p_final_initial 0 (Nothing, Nothing, Nothing)
   where
@@ -71,8 +112,7 @@ descent initial_s layer p_layer_initial final p_final_initial source save = go i
         n = fromIntegral (length is) :: Double
         lf = (-0.01) :: Double
         ff = (-0.01) :: Double
-      (cost, ds, dp_layer, dp_final) <- runRNNIO s layer p_layer final p_final is o
-      -- let Identity (cost, ds, dp_layer, dp_final) = runRNN' s layer p_layer final p_final is o
+      let Identity (cost, ds, dp_layer, dp_final) = runRNN s layer p_layer final p_final is o
       let
         gpn = abs $ norm dp_layer / norm p_layer
       when (i `mod` 100 == 0) $ do
@@ -131,7 +171,7 @@ sampleRNN n s layer p_layer final p_final = go s n
           ps = V.map (*factor) exps
       c <- sampleIO $ categorical [(p, chr i) | (i, p) <- zip [0..] (V.toList ps)]
       let new_s = runNetwork_ layer p_layer (s, oneofn V.! ord c)
-      (c:) <$> go new_s (n-1)
+      (c:) <$> unsafeInterleaveIO (go new_s (n-1))
 
     oneofn :: Vector (Blob 256)
     oneofn = V.generate 256 (\i -> blob (replicate i 0 ++ [1] ++ replicate (255 - i) 0))
@@ -194,6 +234,8 @@ main = do
                <*> sampleIO (initialise layer)
                <*> sampleIO (initialise final)
 
+  deepseqM (initial, p_layer, p_final)
+
   text <- B.readFile fname
 
   let α = 0.98
@@ -205,19 +247,27 @@ main = do
 
     tvec = V.fromList (B.unpack text) :: U.Vector Word8
     ovec = V.map (\c -> oneofn V.! (fromIntegral c)) (V.convert tvec) :: Vector (Blob 256)
+
     source :: IO ([Blob 256], Int)
-    source = do s <- sampleIO (uniform 0 (V.length tvec - 20))
-                l <- sampleIO (uniform 1 19)
+    source = do s <- sampleIO (uniform 0 (V.length tvec - 50))
+                l <- sampleIO (uniform 1 49)
                 let
                   input = V.toList $ V.slice s l ovec
                   output = fromIntegral (tvec V.! (s + l))
                 return (input, output)
 
+    source' :: IO (Vector (Blob 256), Vector Int)
+    source' = do s <- sampleIO (uniform 0 (V.length tvec - 20))
+                 let
+                   input = V.slice s 20 ovec
+                   output = V.map fromIntegral (V.convert (V.slice s 20 tvec))
+                 return (input, output)
+
     save i init p_layer p_final c = do
       modifyIORef' running_average (\x -> (α*x + (1 - α)*c))
       when (i `mod` 50 == 0) $ do
         x <- readIORef running_average
-        putStrLn $ show i ++ " " ++ show x ++ " " ++ show c
+        putStrLn $ show i ++ " " ++ show (x/19) ++ " " ++ show (c / 19)
       when (i `mod` 1000 == 0) $ do
         writeFile savefile $ show (init, p_layer, p_final)
         test <- sampleRNN 100 init layer p_layer finalx p_final
@@ -225,8 +275,10 @@ main = do
 
   deepseqM (tvec, ovec)
 
-  descent initial layer p_layer final p_final source save
+  -- test <- sampleRNN 10000 initial layer p_layer finalx p_final
+  -- putStrLn test
 
+  descent' initial layer p_layer final p_final source' save
 
 
   -- (inputs, o) <- source
