@@ -8,6 +8,7 @@ import           Data.Char
 import           Data.Foldable
 import           Data.IORef
 import           Data.List
+import           Data.Maybe
 import           Data.Monoid
 import           Data.Proxy
 import           Data.Traversable
@@ -181,13 +182,11 @@ sampleRNN n s layer p_layer final p_final = go s n
                     one' = left swap >>> assocR >>> right one >>> assocL >>> left swap
                 in one' >>> two'
 
-data Options = Options {
-  initial :: Maybe FilePath,
-  input :: FilePath,
-  output :: FilePath
-  } deriving (Show)
+data Options = Train (Maybe FilePath) FilePath FilePath
+             | Sample FilePath (Maybe Int)
+             deriving (Show)
 
-type N = 10
+type N = 100
 type Hidden = (Blob N, Blob N)
 
 type LayerH h a b = Network Identity (h, a) (h, b)
@@ -196,11 +195,21 @@ main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
 
-  opts <- execParser (info (Options
-                            <$> optional (strOption (long "initial"))
-                            <*> strOption (long "input")
-                            <*> strOption (long "output"))
-                      fullDesc)
+  let optparser = (info (subparser
+                         (command "train"
+                          (info (Train
+                                 <$> optional (strOption (long "initial"))
+                                 <*> strOption (long "input")
+                                 <*> strOption (long "output"))
+                           (progDesc "Train NN.")) <>
+                          command "sample"
+                          (info (Sample
+                                 <$> strOption (long "snapshot")
+                                 <*> optional (option auto (long "length")))
+                           (progDesc "Sample output."))))
+                   idm)
+
+  opts <- customExecParser (prefs showHelpOnError) optparser
 
   let
     -- layer :: Network Identity ((Blob N, Blob N), Blob 256) (Blob N, Blob N)
@@ -221,65 +230,58 @@ main = do
     final :: Network Identity ((Hidden, Blob N), Int) ()
     final = left finalx >>> softmaxCost
 
-    -- experiment :: Network Identity ((Blob N, Blob N), Vector (Blob 256)) (Blob 256)
-    -- experiment = rnn layer >>> finalx
-
-  let fname = input opts
-      savefile = output opts
-
-  (initial, p_layer, p_final) <- case initial opts of
-    Just path -> read <$> readFile path
-    Nothing -> (,,)
-               <$> pure ((unit, unit), unit)
-               <*> sampleIO (initialise layer)
-               <*> sampleIO (initialise final)
-
-  deepseqM (initial, p_layer, p_final)
-
-  text <- B.readFile fname
-
-  let α = 0.98
-  running_average <- newIORef 0
-
-  let
     oneofn :: Vector (Blob 256)
     oneofn = V.generate 256 (\i -> blob (replicate i 0 ++ [1] ++ replicate (255 - i) 0))
 
-    tvec = V.fromList (B.unpack text) :: U.Vector Word8
-    ovec = V.map (\c -> oneofn V.! (fromIntegral c)) (V.convert tvec) :: Vector (Blob 256)
+    -- experiment :: Network Identity ((Blob N, Blob N), Vector (Blob 256)) (Blob 256)
+    -- experiment = rnn layer >>> finalx
 
-    source :: IO ([Blob 256], Int)
-    source = do s <- sampleIO (uniform 0 (V.length tvec - 50))
-                l <- sampleIO (uniform 1 49)
-                let
-                  input = V.toList $ V.slice s l ovec
-                  output = fromIntegral (tvec V.! (s + l))
-                return (input, output)
+  case opts of
+   Train initpath input savefile -> do
+     (initial, p_layer, p_final) <- case initpath of
+       Just path -> read <$> readFile path
+       Nothing -> (,,)
+                  <$> pure ((unit, unit), unit)
+                  <*> sampleIO (initialise layer)
+                  <*> sampleIO (initialise final)
 
-    source' :: IO (Vector (Blob 256), Vector Int)
-    source' = do s <- sampleIO (uniform 0 (V.length tvec - 20))
-                 let
-                   input = V.slice s 20 ovec
-                   output = V.map fromIntegral (V.convert (V.slice s 20 tvec))
-                 return (input, output)
+     deepseqM (initial, p_layer, p_final)
 
-    save i init p_layer p_final c = do
-      modifyIORef' running_average (\x -> (α*x + (1 - α)*c))
-      when (i `mod` 50 == 0) $ do
-        x <- readIORef running_average
-        putStrLn $ show i ++ " " ++ show (x/19) ++ " " ++ show (c / 19)
-      when (i `mod` 1000 == 0) $ do
-        writeFile savefile $ show (init, p_layer, p_final)
-        test <- sampleRNN 100 init layer p_layer finalx p_final
-        putStrLn test
+     text <- B.readFile input
 
-  deepseqM (tvec, ovec)
+     running_average <- newIORef 0
 
-  -- test <- sampleRNN 10000 initial layer p_layer finalx p_final
-  -- putStrLn test
+     let
+       α = 0.98
+       tvec = V.fromList (B.unpack text) :: U.Vector Word8
+       ovec = V.map (\c -> oneofn V.! (fromIntegral c)) (V.convert tvec) :: Vector (Blob 256)
 
-  descent' initial layer p_layer final p_final source' save
+       source :: IO (Vector (Blob 256), Vector Int)
+       source = do s <- sampleIO (uniform 0 (V.length tvec - 50))
+                   let
+                     input = V.slice s 50 ovec
+                     output = V.map fromIntegral (V.convert (V.slice s 50 tvec))
+                   return (input, output)
 
+       save i init p_layer p_final c = do
+         modifyIORef' running_average (\x -> (α*x + (1 - α)*c))
+         when (i `mod` 50 == 0) $ do
+           x <- readIORef running_average
+           putStrLn $ show i ++ " " ++ show (x/49) ++ " " ++ show (c / 49)
+         when (i `mod` 1000 == 0) $ do
+           writeFile savefile $ show (init, p_layer, p_final)
+           test <- sampleRNN 100 init layer p_layer finalx p_final
+           putStrLn test
+     deepseqM (tvec, ovec)
+
+     descent' initial layer p_layer final p_final source save
+
+   Sample initpath length -> do
+     (initial, p_layer, p_final) <- read <$> readFile initpath
+     deepseqM (initial, p_layer, p_final)
+
+     text <- sampleRNN (fromMaybe maxBound length) initial layer p_layer finalx p_final
+     putStrLn text
 
   -- (inputs, o) <- source
   -- checkGradient $ splitLayer >>> rnn layer inputs >>> feedR o final
