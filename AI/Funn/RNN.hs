@@ -2,10 +2,12 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
-module AI.Funn.RNN (runRNN, runRNNIO, rnn) where
+module AI.Funn.RNN (runRNN, rnn, rnnBig, zipWithNetwork_) where
 
 import           Control.Applicative
+import           Control.Applicative.Backwards
 import           Control.Monad
+import           Control.Monad.State.Lazy
 import           Data.Foldable
 import           Data.Traversable
 
@@ -45,12 +47,12 @@ addToIO target ys = go target (coerce ys :: [S.Vector Double])
       vector_add target v
       go (M.drop (V.length v) target) vs
 
-addTo :: Parameters -> [Parameters] -> Parameters
-addTo (Parameters xs) ys = Parameters $ unsafePerformIO body
+sumParameterList :: Foldable f => Int -> f [Parameters] -> Parameters
+sumParameterList n xss = Parameters $ unsafePerformIO go
   where
-    body = do target <- V.thaw xs
-              addToIO target ys
-              V.unsafeFreeze target
+    go = do target <- M.replicate n 0
+            traverse_ (addToIO target) xss
+            V.unsafeFreeze target
 
 addParameters :: Parameters -> Parameters -> Parameters
 addParameters (Parameters x) (Parameters y) = Parameters (x + y)
@@ -61,79 +63,85 @@ scaleParameters x (Parameters y) = Parameters (HM.scale x y)
 instance Derivable a => Derivable (Vector a) where
   type D (Vector a) = Vector (D a)
 
+traverseBack :: (Traversable t, Applicative f) => (a -> f b) -> t a -> f (t b)
+traverseBack f = forwards . traverse (Backwards . f)
+
 rnn :: (Monad m) => Network m (s,i) s -> Network m (s, Vector i) s
 rnn layer = Network ev (params layer) (initialise layer)
   where
-    ev pars (s, inputs) = do (s', k) <- go pars s (V.toList inputs)
-                             let n = V.length (inputs)
+    ev pars (s, inputs) = do (ks, s') <- runStateT (traverse (go_forward pars) inputs) s
+                             let α = 1 / fromIntegral (1 + V.length inputs)
                                  backward ds' = do
-                                   (ds, dis, dpar) <- k ds'
-                                   return ((ds, V.fromList dis), [scaleParameters (1 / fromIntegral n) dpar])
+                                   (back, ds) <- runStateT (traverseBack go_backward ks) ds'
+                                   let dpar = sumParameterList p (V.map snd back)
+                                       dis = V.map fst back
+                                   return ((ds, dis), [scaleParameters α dpar])
                              return (s', 0, backward)
 
-    go pars s [] = let backward ds = return (ds, [], Parameters (V.replicate p 0))
-                   in return (s, backward)
-    go pars s (i:is) = do (s1, _, k1) <- evaluate layer pars (s,i)
-                          (s', k') <- go pars s1 is
-                          let backward ds' = do
-                                (ds1, dis, dpar_rest) <- k' ds'
-                                ((ds, di), dpar_1) <- k1 ds1
-                                return (ds, di : dis, dpar_rest `addTo` dpar_1)
-                          return (s', backward)
+    go_forward pars i = do s <- get
+                           (s', _, k) <- lift (evaluate layer pars (s,i))
+                           put s'
+                           return k
+
+    go_backward k = do ds' <- get
+                       ((ds, di), dparl) <- lift (k ds')
+                       put ds
+                       return (di, dparl)
 
     p = params layer
 
-rnn_ :: (Monad m) => Network m (s,i) s -> [i] -> Network m s s
-rnn_ layer inputs = Network ev (params layer) (initialise layer)
+rnnBig :: (ds ~ D s, VectorSpace ds, Monad m) => Network m (s,i) s -> Network m (s, Vector i) (Vector s)
+rnnBig layer = Network ev (params layer) (initialise layer)
   where
-    ev params s = do (new_s, k) <- go params s inputs
-                     let backward ds_new = do
-                           (ds, dpar) <- k ds_new
-                           return (ds, [dpar])
-                     return (new_s, 0, backward)
+    ev pars (s, inputs) = do stuff <- evalStateT (traverse (go_forward pars) inputs) s
+                             let out = V.cons s (V.map fst stuff)
+                                 ks = V.map snd stuff
+                                 α = 1 / fromIntegral (1 + V.length inputs)
+                                 backward dss = do
+                                   (back, ds) <- runStateT (traverseBack go_backward (V.zip ks (V.init dss))) (V.last dss)
+                                   let dpar = sumParameterList p (V.map snd back)
+                                       dis = V.map fst back
+                                   return ((ds, dis), [scaleParameters α dpar])
+                             return (out, 0, backward)
 
-    go params s [] = return (s, \ds -> return (ds, Parameters (V.replicate p 0)))
-    go params s (i:is) = do (s_1, _, k1) <- evaluate layer params (s,i)
-                            (s_2, k) <- go params s_1 is
-                            let backward ds_3 = do
-                                  (ds_2, dp2) <- k ds_3
-                                  ((ds_1, _), dp1) <- k1 ds_2
-                                  return (ds_1, dp2 `addTo` dp1)
-                            return (s_2, backward)
+    go_forward pars i = do s <- get
+                           (s', _, k) <- lift $ evaluate layer pars (s,i)
+                           put s'
+                           return (s', k)
 
-    n = length inputs
+    go_backward (k, dsA) = do ds' <- get
+                              ((dsB, di), dparl) <- lift (k ds')
+                              let ds = dsA ## dsB
+                              put ds
+                              return (di, dparl)
+
     p = params layer
 
 runRNN :: (Monad m) => s -> Network m (s,i) s -> Parameters -> Network m (s,o) () -> Parameters -> [i] -> o -> m (Double, D s, D Parameters, D Parameters)
-runRNN s_init layer p_layer final p_final inputs o = do (c, ds, d_layer, d_final) <- go s_init inputs
-                                                        return $ (c, ds, scaleParameters (1 / fromIntegral n) d_layer, d_final)
+runRNN s_init layer p_layer final p_final inputs o = do
+  let network = rnn layer
+  (s, _, kl) <- evaluate (rnn layer) p_layer (s_init, V.fromList inputs)
+  ((), cost, kf) <- evaluate final p_final (s,o)
+  ((ds,_), d_final) <- kf ()
+  ((ds_init,_), d_layer) <- kl ds
+  return (cost, ds_init, fold d_layer, fold d_final)
+
+zipWithNetwork_ :: (Monad m) => Network m (a, b) () -> Network m (Vector a, Vector b) ()
+zipWithNetwork_ network = Network ev (params network) (initialise network)
   where
-    go s [] = do ((), cost, k) <- evaluate final p_final (s, o)
-                 ((ds, _), l_dp_final) <- k ()
-                 return (cost, ds, Parameters (V.replicate (params layer) 0), fold l_dp_final)
+    ev pars (as, bs) = do stuff <- traverse (go_forward pars) (V.zip as bs)
+                          let cost = V.sum (V.map fst stuff)
+                              ks = V.map snd stuff
+                              α = 1 / fromIntegral (1 + V.length as)
+                              backward () = do
+                                back <- traverse go_backward ks
+                                let das = V.map (fst.fst) back
+                                    dbs = V.map (snd.fst) back
+                                    dpar = sumParameterList (params network) (V.map snd back)
+                                return ((das, dbs), [scaleParameters α dpar])
+                          return ((), cost, backward)
 
-    go s (i:is) = do (s_new, _, k) <- evaluate layer p_layer (s, i)
-                     (cost, ds, dp_layer, dp_final) <- go s_new is
-                     ((ds2, _), l_dp_layer2) <- k ds
-                     return (cost, ds2, dp_layer `addTo` l_dp_layer2, dp_final)
+    go_forward pars (a,b) = do (_, cost, k) <- evaluate network pars (a,b)
+                               return (cost, k)
 
-    n = length inputs
-
--- add parameters derivative in a mutable vector to avoid copying
-runRNNIO :: s -> Network Identity (s,i) s -> Parameters -> Network Identity (s,o) () -> Parameters -> [i] -> o -> IO (Double, D s, D Parameters, D Parameters)
-runRNNIO s_init layer p_layer final p_final inputs o = do d_layer <- M.replicate (params layer) 0
-                                                          (c, ds, d_final) <- go d_layer s_init inputs
-                                                          d_layer' <- V.unsafeFreeze d_layer
-                                                          return $ (c, ds, scaleParameters (1 / fromIntegral n) (Parameters d_layer'), d_final)
-  where
-    go _       s [] = do let Identity ((), cost, k) = evaluate final p_final (s, o)
-                             Identity ((ds, _), l_dp_final) = k ()
-                         return (cost, ds, fold l_dp_final)
-
-    go d_layer s (i:is) = do let Identity (s_new, _, k) = evaluate layer p_layer (s, i)
-                             (cost, ds, dp_final) <- go d_layer s_new is
-                             let Identity((ds2, _), l_dp_layer) = k ds
-                             addToIO d_layer l_dp_layer
-                             return (cost, ds2, dp_final)
-
-    n = length inputs
+    go_backward k = k ()
