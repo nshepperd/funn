@@ -119,7 +119,6 @@ rnnBig layer = Network ev (params layer) (initialise layer)
 
 runRNN :: (Monad m) => s -> Network m (s,i) s -> Parameters -> Network m (s,o) () -> Parameters -> [i] -> o -> m (Double, D s, D Parameters, D Parameters)
 runRNN s_init layer p_layer final p_final inputs o = do
-  let network = rnn layer
   (s, _, kl) <- evaluate (rnn layer) p_layer (s_init, V.fromList inputs)
   ((), cost, kf) <- evaluate final p_final (s,o)
   ((ds,_), d_final) <- kf ()

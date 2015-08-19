@@ -20,6 +20,9 @@ import           Options.Applicative
 import           Data.Map (Map)
 import qualified Data.Map.Strict as Map
 
+import qualified Data.Binary as LB
+import qualified Data.ByteString.Lazy as LB
+
 import           Control.DeepSeq
 import           Data.Coerce
 import           Debug.Trace
@@ -44,6 +47,7 @@ import           AI.Funn.Network
 import           AI.Funn.RNN
 import           AI.Funn.SGD
 import           AI.Funn.SomeNat
+import           AI.Funn.Common
 
 type Layer = Network Identity
 
@@ -186,10 +190,14 @@ data Options = Train (Maybe FilePath) FilePath FilePath
              | Sample FilePath (Maybe Int)
              deriving (Show)
 
-type N = 100
+type N = 10
 type Hidden = (Blob N, Blob N)
 
 type LayerH h a b = Network Identity (h, a) (h, b)
+
+instance LB.Binary (Blob n) where
+  put (Blob xs) = putVector putDouble xs
+  get = Blob <$> getVector getDouble
 
 main :: IO ()
 main = do
@@ -239,7 +247,8 @@ main = do
   case opts of
    Train initpath input savefile -> do
      (initial, p_layer, p_final) <- case initpath of
-       Just path -> read <$> readFile path
+       -- Just path -> read <$> readFile path
+       Just path -> LB.decode <$> LB.readFile path
        Nothing -> (,,)
                   <$> pure ((unit, unit), unit)
                   <*> sampleIO (initialise layer)
@@ -269,7 +278,8 @@ main = do
            x <- readIORef running_average
            putStrLn $ show i ++ " " ++ show (x/49) ++ " " ++ show (c / 49)
          when (i `mod` 1000 == 0) $ do
-           writeFile savefile $ show (init, p_layer, p_final)
+           -- writeFile savefile $ show (init, p_layer, p_final)
+           LB.writeFile savefile $ LB.encode (init, p_layer, p_final)
            test <- sampleRNN 100 init layer p_layer finalx p_final
            putStrLn test
      deepseqM (tvec, ovec)
@@ -277,7 +287,7 @@ main = do
      descent' initial layer p_layer final p_final source save
 
    Sample initpath length -> do
-     (initial, p_layer, p_final) <- read <$> readFile initpath
+     (initial, p_layer, p_final) <- LB.decode <$> LB.readFile initpath
      deepseqM (initial, p_layer, p_final)
 
      text <- sampleRNN (fromMaybe maxBound length) initial layer p_layer finalx p_final
