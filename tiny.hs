@@ -43,6 +43,7 @@ import qualified Numeric.LinearAlgebra.HMatrix as HM
 
 import           AI.Funn.Flat
 import           AI.Funn.LSTM
+import           AI.Funn.Mixing
 import           AI.Funn.Network
 import           AI.Funn.RNN
 import           AI.Funn.SGD
@@ -188,9 +189,10 @@ sampleRNN n s layer p_layer final p_final = go s n
 
 data Options = Train (Maybe FilePath) FilePath FilePath
              | Sample FilePath (Maybe Int)
+             | CheckDeriv
              deriving (Show)
 
-type N = 10
+type N = 1000
 type Hidden = (Blob N, Blob N)
 
 type LayerH h a b = Network Identity (h, a) (h, b)
@@ -203,19 +205,25 @@ main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
 
-  let optparser = (info (subparser
-                         (command "train"
-                          (info (Train
-                                 <$> optional (strOption (long "initial"))
-                                 <*> strOption (long "input")
-                                 <*> strOption (long "output"))
-                           (progDesc "Train NN.")) <>
-                          command "sample"
-                          (info (Sample
-                                 <$> strOption (long "snapshot")
-                                 <*> optional (option auto (long "length")))
-                           (progDesc "Sample output."))))
-                   idm)
+  let optparser = (info (subparser $
+                         command "train"
+                         (info (Train
+                                <$> optional (strOption (long "initial" <> action "file"))
+                                <*> strOption (long "input" <> action "file")
+                                <*> strOption (long "output" <> action "file"))
+                          (progDesc "Train NN."))
+                         <>
+                         command "sample"
+                         (info (Sample
+                                <$> strOption (long "snapshot" <> action "file")
+                                <*> optional (option auto (long "length")))
+                          (progDesc "Sample output."))
+                         <>
+                         command "check"
+                         (info (pure CheckDeriv)
+                          (progDesc "Check Derivatives."))
+                        )
+                   fullDesc)
 
   opts <- customExecParser (prefs showHelpOnError) optparser
 
@@ -224,16 +232,16 @@ main = do
     -- layer = assocR >>> right (mergeLayer >>> fcLayer >>> sigmoidLayer) >>> lstmLayer
 
     layer1 :: LayerH (Blob N) (Blob N, Blob 256) (Blob N)
-    layer1 = right (mergeLayer >>> fcLayer >>> sigmoidLayer) >>> lstmLayer
+    layer1 = right (mergeLayer >>> freeLayer >>> sigmoidLayer) >>> lstmLayer
 
     layer2 :: LayerH (Blob N) (Blob N) (Blob N)
-    layer2 = right (fcLayer >>> sigmoidLayer) >>> lstmLayer
+    layer2 = right (freeLayer >>> sigmoidLayer) >>> lstmLayer
 
     layer :: Layer (((Blob N, Blob N), Blob N), Blob 256) ((Blob N, Blob N), Blob N)
     layer = assocR >>> (layer1 >&> layer2)
 
     finalx :: Network Identity (Hidden, Blob N) (Blob 256)
-    finalx = left mergeLayer >>> mergeLayer >>> fcLayer
+    finalx = left mergeLayer >>> mergeLayer >>> freeLayer
 
     final :: Network Identity ((Hidden, Blob N), Int) ()
     final = left finalx >>> softmaxCost
@@ -243,6 +251,8 @@ main = do
 
     -- experiment :: Network Identity ((Blob N, Blob N), Vector (Blob 256)) (Blob 256)
     -- experiment = rnn layer >>> finalx
+
+  print (params layer + params final)
 
   case opts of
    Train initpath input savefile -> do
@@ -259,6 +269,7 @@ main = do
      text <- B.readFile input
 
      running_average <- newIORef 0
+     running_count <- newIORef 0
 
      let
        α = 0.98
@@ -274,12 +285,14 @@ main = do
 
        save i init p_layer p_final c = do
          modifyIORef' running_average (\x -> (α*x + (1 - α)*c))
+         modifyIORef' running_count (\x -> (α*x + (1 - α)*1))
+         x <- (/) <$> readIORef running_average <*> readIORef running_count
          when (i `mod` 50 == 0) $ do
-           x <- readIORef running_average
            putStrLn $ show i ++ " " ++ show (x/49) ++ " " ++ show (c / 49)
          when (i `mod` 1000 == 0) $ do
            -- writeFile savefile $ show (init, p_layer, p_final)
-           LB.writeFile savefile $ LB.encode (init, p_layer, p_final)
+           LB.writeFile (savefile ++ "." ++ show i ++ "." ++ show x ++ ".bin") $ LB.encode (init, p_layer, p_final)
+           LB.writeFile (savefile ++ ".latest.bin") $ LB.encode (init, p_layer, p_final)
            test <- sampleRNN 100 init layer p_layer finalx p_final
            putStrLn test
      deepseqM (tvec, ovec)
@@ -293,15 +306,15 @@ main = do
      text <- sampleRNN (fromMaybe maxBound length) initial layer p_layer finalx p_final
      putStrLn text
 
-  -- (inputs, o) <- source
-  -- checkGradient $ splitLayer >>> rnn layer inputs >>> feedR o final
+   CheckDeriv -> do
+    -- checkGradient $ splitLayer >>> rnn layer inputs >>> feedR o final
 
-  -- checkGradient $ feedR o (softmaxCost :: Network Identity (Blob 256, Int) ())
+    -- checkGradient $ feedR o (softmaxCost :: Network Identity (Blob 256, Int) ())
 
-  -- checkGradient $ splitLayer >>> (quadraticCost :: Network Identity (Blob 10, Blob 10) ())
+    checkGradient $ splitLayer >>> (quadraticCost :: Network Identity (Blob 10, Blob 10) ())
 
-  -- checkGradient $ (fcLayer :: Network Identity (Blob 20) (Blob 20)) >>> splitLayer >>> (quadraticCost :: Network Identity (Blob 10, Blob 10) ())
+    checkGradient $ (fcLayer :: Network Identity (Blob 20) (Blob 20)) >>> splitLayer >>> (quadraticCost :: Network Identity (Blob 10, Blob 10) ())
 
-  -- checkGradient $ splitLayer >>> (lstmLayer :: Network Identity (Blob 1, Blob 4) (Blob 1, Blob 1)) >>> quadraticCost
+    checkGradient $ splitLayer >>> (lstmLayer :: Network Identity (Blob 1, Blob 4) (Blob 1, Blob 1)) >>> quadraticCost
 
-  -- checkGradient $ splitLayer >>> left splitLayer >>> layer >>> quadraticCost
+    checkGradient $ splitLayer >>> left (freeLayer :: Layer (Blob 50) (Blob 100)) >>> (quadraticCost :: Network Identity (Blob 100, Blob 100) ())
