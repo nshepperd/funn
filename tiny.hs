@@ -17,6 +17,8 @@ import           System.Environment
 
 import           Options.Applicative
 
+import           Text.Printf
+
 import           Data.Map (Map)
 import qualified Data.Map.Strict as Map
 
@@ -286,15 +288,17 @@ main = do
        save i init p_layer p_final c = do
          modifyIORef' running_average (\x -> (α*x + (1 - α)*c))
          modifyIORef' running_count (\x -> (α*x + (1 - α)*1))
-         x <- (/) <$> readIORef running_average <*> readIORef running_count
+         x' <- (/) <$> readIORef running_average <*> readIORef running_count
+         let x = x' / 49
          when (i `mod` 50 == 0) $ do
-           putStrLn $ show i ++ " " ++ show (x/49) ++ " " ++ show (c / 49)
+           putStrLn $ show i ++ " " ++ show x ++ " " ++ show (c / 49)
          when (i `mod` 1000 == 0) $ do
            -- writeFile savefile $ show (init, p_layer, p_final)
-           LB.writeFile (savefile ++ "." ++ show i ++ "." ++ show x ++ ".bin") $ LB.encode (init, p_layer, p_final)
-           LB.writeFile (savefile ++ ".latest.bin") $ LB.encode (init, p_layer, p_final)
+           LB.writeFile (printf "%s-%6.6i-%5.5f.bin" savefile i x) $ LB.encode (init, p_layer, p_final)
+           LB.writeFile (savefile ++ "-latest.bin") $ LB.encode (init, p_layer, p_final)
            test <- sampleRNN 100 init layer p_layer finalx p_final
            putStrLn test
+
      deepseqM (tvec, ovec)
 
      descent' initial layer p_layer final p_final source save
