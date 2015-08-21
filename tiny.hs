@@ -1,5 +1,5 @@
 {-# LANGUAGE TypeFamilies, KindSignatures, DataKinds, TypeOperators #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ScopedTypeVariables, FlexibleContexts #-}
 {-# LANGUAGE BangPatterns #-}
 
 import           Control.Applicative
@@ -42,6 +42,8 @@ import           Data.Vector (Vector)
 import qualified Data.Vector.Generic as V
 import qualified Data.Vector.Unboxed as U
 import qualified Numeric.LinearAlgebra.HMatrix as HM
+
+import qualified Criterion
 
 import           AI.Funn.Flat
 import           AI.Funn.LSTM
@@ -194,7 +196,7 @@ data Options = Train (Maybe FilePath) FilePath FilePath
              | CheckDeriv
              deriving (Show)
 
-type N = 1000
+type N = 100
 type Hidden = (Blob N, Blob N)
 
 type LayerH h a b = Network Identity (h, a) (h, b)
@@ -322,3 +324,14 @@ main = do
     checkGradient $ splitLayer >>> (lstmLayer :: Network Identity (Blob 1, Blob 4) (Blob 1, Blob 1)) >>> quadraticCost
 
     checkGradient $ splitLayer >>> left (freeLayer :: Layer (Blob 50) (Blob 100)) >>> (quadraticCost :: Network Identity (Blob 100, Blob 100) ())
+
+    let benchNetwork net v = do
+          pars <- sampleIO (initialise net)
+          let f x = runIdentity $ do (o, c, k) <- evaluate net pars x
+                                     (da, dp) <- k unit
+                                     return (o, c, da, dp)
+          -- return $ Criterion.nf (runNetwork_ net pars) v
+          return $ Criterion.nf f v
+
+    Criterion.benchmark =<< benchNetwork (freeLayer >>> biasLayer :: Network Identity (Blob 1000) (Blob 1000)) unit
+    Criterion.benchmark =<< benchNetwork (fcLayer :: Network Identity (Blob 1000) (Blob 1000)) unit
