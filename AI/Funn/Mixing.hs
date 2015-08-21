@@ -2,7 +2,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
-module AI.Funn.Mixing (freeLayer) where
+module AI.Funn.Mixing (freeLayer, biasLayer) where
 
 import           GHC.TypeLits
 
@@ -108,6 +108,18 @@ freeLayer
     a,b :: Int
     a = fromIntegral (natVal (Proxy :: Proxy a))
     b = fromIntegral (natVal (Proxy :: Proxy b))
+
+biasLayer :: forall n m. (Monad m, KnownNat n) => Network m (Blob n) (Blob n)
+biasLayer = Network ev n initial
+  where
+    ev pars input = let out = Blob (getBlob input + getParameters pars)
+                        backward δ = return (δ, [Parameters (getBlob δ)])
+                    in return (out, 0, backward)
+
+    initial = pure (Parameters (V.replicate n 0))
+
+    n :: Int
+    n = fromIntegral (natVal (Proxy :: Proxy n))
 
 mixLayer :: forall n m. (Monad m, KnownNat n) => Network m (Blob n) (Blob n)
 mixLayer = Network eval (3*n) initial

@@ -234,16 +234,16 @@ main = do
     -- layer = assocR >>> right (mergeLayer >>> fcLayer >>> sigmoidLayer) >>> lstmLayer
 
     layer1 :: LayerH (Blob N) (Blob N, Blob 256) (Blob N)
-    layer1 = right (mergeLayer >>> freeLayer >>> sigmoidLayer) >>> lstmLayer
+    layer1 = right (mergeLayer >>> freeLayer >>> biasLayer >>> sigmoidLayer) >>> lstmLayer
 
     layer2 :: LayerH (Blob N) (Blob N) (Blob N)
-    layer2 = right (freeLayer >>> sigmoidLayer) >>> lstmLayer
+    layer2 = right (freeLayer >>> biasLayer >>> sigmoidLayer) >>> lstmLayer
 
     layer :: Layer (((Blob N, Blob N), Blob N), Blob 256) ((Blob N, Blob N), Blob N)
     layer = assocR >>> (layer1 >&> layer2)
 
     finalx :: Network Identity (Hidden, Blob N) (Blob 256)
-    finalx = left mergeLayer >>> mergeLayer >>> freeLayer
+    finalx = left mergeLayer >>> mergeLayer >>> freeLayer >>> biasLayer
 
     final :: Network Identity ((Hidden, Blob N), Int) ()
     final = left finalx >>> softmaxCost
