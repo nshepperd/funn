@@ -74,6 +74,9 @@ scaleParameters x (Parameters y) = Parameters (HM.scale x y)
 norm :: Parameters -> Double
 norm (Parameters xs) = sqrt $ V.sum $ V.map (^2) xs
 
+clipping_limit :: Double
+clipping_limit = 0.1
+
 descent' :: (VectorSpace s, s ~ (D s), Derivable s) => s -> Network Identity (s,i) s -> Parameters -> Network Identity (s,o) () -> Parameters -> IO (Vector i, Vector o) -> (Int -> s -> Parameters -> Parameters -> Double -> IO ()) -> IO ()
 descent' initial_s layer p_layer_initial final p_final_initial source save = go initial_s p_layer_initial p_final_initial (0::Int) (Nothing, Nothing, Nothing)
   where
@@ -88,45 +91,24 @@ descent' initial_s layer p_layer_initial final p_final_initial source save = go 
         ff = (-0.01) :: Double
         Identity (ss, _,    kl) = evaluate mid p_layer s
         Identity ((), cost, kf) = evaluate loss p_final (ss,os)
-        Identity ((dss, _), [dp_final]) = kf ()
-        Identity (ds, [dp_layer]) = kl dss
+        Identity ((dss, _), [dp_final']) = kf ()
+        Identity (ds, [dp_layer']) = kl dss
 
-      -- let Identity (cost, ds, dp_layer, dp_final) = runRNN s layer p_layer final p_final is o
-      let
-        gpn = abs $ norm dp_layer / norm p_layer
+        dp_gpn = (abs $ norm dp_layer' / norm p_layer)
+        df_gpn = (abs $ norm dp_final' / norm p_final)
+
+        -- Gradient clipping should avoid exploding gradients
+        dp_layer = if dp_gpn > clipping_limit then
+                     scaleParameters (clipping_limit / dp_gpn) dp_layer'
+                   else dp_layer'
+
+        dp_final = if df_gpn > clipping_limit then
+                     scaleParameters (clipping_limit / df_gpn) dp_final'
+                   else dp_final'
+
       when (i `mod` 100 == 0) $ do
-        putStrLn $ "grad/param norm: " ++ show gpn
-      save i s p_layer p_final cost
-      let
-        -- (new_s, new_m_s) = let δ = case m_s of
-        --                             Just m -> scale (-0.01) ds ## scale (0.9) m
-        --                             Nothing -> scale (-0.01) ds
-        --                    in (s ## δ, Just δ)
-        (new_p_layer, new_m_layer) = momentum lf p_layer dp_layer m_layer
-        (new_p_final, new_m_final) = momentum ff p_final dp_final m_final
-      go s new_p_layer new_p_final (i+1) (m_s, new_m_layer, new_m_final)
+        putStrLn $ "grad/param norm: " ++ show (dp_gpn, df_gpn)
 
-    momentum :: Double -> Parameters -> Parameters -> Maybe Parameters -> (Parameters, Maybe Parameters)
-    momentum f par d_par m_par = let δ = case m_par of
-                                          Just m -> scaleParameters f d_par `addParameters` scaleParameters 0.9 m
-                                          Nothing -> scaleParameters f d_par
-                                 in (par `addParameters` δ, Just δ)
-
-
-descent :: (VectorSpace s, s ~ (D s), Derivable s) => s -> Network Identity (s,i) s -> Parameters -> Network Identity (s,o) () -> Parameters -> IO ([i], o) -> (Int -> s -> Parameters -> Parameters -> Double -> IO ()) -> IO ()
-descent initial_s layer p_layer_initial final p_final_initial source save = go initial_s p_layer_initial p_final_initial 0 (Nothing, Nothing, Nothing)
-  where
-    go !s !p_layer !p_final !i (m_s, m_layer, m_final) = do
-      (is, o) <- source
-      let
-        n = fromIntegral (length is) :: Double
-        lf = (-0.01) :: Double
-        ff = (-0.01) :: Double
-      let Identity (cost, ds, dp_layer, dp_final) = runRNN s layer p_layer final p_final is o
-      let
-        gpn = abs $ norm dp_layer / norm p_layer
-      when (i `mod` 100 == 0) $ do
-        putStrLn $ "grad/param norm: " ++ show gpn
       save i s p_layer p_final cost
       let
         -- (new_s, new_m_s) = let δ = case m_s of
@@ -170,8 +152,8 @@ checkGradient network = do parameters <- sampleIO (initialise network)
     ε = 0.000001
 
 
-sampleRNN :: Int -> s -> Network Identity (s, Blob 256) s -> Parameters -> Network Identity s (Blob 256) -> Parameters -> IO String
-sampleRNN n s layer p_layer final p_final = go s n
+sampleRNN :: Int -> s -> Network Identity (s, Blob 256) s -> Parameters -> Network Identity s (Blob 256) -> Parameters -> (s -> IO ()) -> IO String
+sampleRNN n s layer p_layer final p_final xxx = go s n
   where
     go s 0 = return []
     go s n = do
@@ -181,6 +163,7 @@ sampleRNN n s layer p_layer final p_final = go s n
           ps = V.map (*factor) exps
       c <- sampleIO $ categorical [(p, chr i) | (i, p) <- zip [0..] (V.toList ps)]
       let new_s = runNetwork_ layer p_layer (s, oneofn V.! ord c)
+      xxx new_s
       (c:) <$> unsafeInterleaveIO (go new_s (n-1))
 
     oneofn :: Vector (Blob 256)
@@ -196,7 +179,7 @@ data Options = Train (Maybe FilePath) FilePath FilePath
              | CheckDeriv
              deriving (Show)
 
-type N = 100
+type N = 1000
 type Hidden = (Blob N, Blob N)
 
 type LayerH h a b = Network Identity (h, a) (h, b)
@@ -288,17 +271,34 @@ main = do
                    return (input, output)
 
        save i init p_layer p_final c = do
-         modifyIORef' running_average (\x -> (α*x + (1 - α)*c))
-         modifyIORef' running_count (\x -> (α*x + (1 - α)*1))
-         x' <- (/) <$> readIORef running_average <*> readIORef running_count
-         let x = x' / 49
+
+         when (not (isInfinite c)) $ do
+           modifyIORef' running_average (\x -> (α*x + (1 - α)*c))
+           modifyIORef' running_count (\x -> (α*x + (1 - α)*1))
+
+         x <- do q <- readIORef running_average
+                 w <- readIORef running_count
+                 return ((q / w) / 49)
+
+         let
+           pa = V.sum (V.map abs $ getParameters p_layer) / fromIntegral (params layer)
+           pa_max = V.maximum (V.map abs $ getParameters p_layer)
+         when (pa > 1) $ do
+           putStrLn $ printf "[%i] p_layer = %f" i pa
+
+         let
+           pf = V.sum (V.map abs $ getParameters p_final) / fromIntegral (params final)
+           pf_max = V.maximum (V.map abs $ getParameters p_final)
+         when (pf > 1) $ do
+           putStrLn $ printf "[%i] p_final = %f" i pf
+
          when (i `mod` 50 == 0) $ do
-           putStrLn $ show i ++ " " ++ show x ++ " " ++ show (c / 49)
+           putStrLn $ show i ++ " " ++ show x ++ " " ++ show (c / 49) ++ "    [" ++ show ((pa, pa_max), (pf, pf_max)) ++ "]"
          when (i `mod` 1000 == 0) $ do
            -- writeFile savefile $ show (init, p_layer, p_final)
            LB.writeFile (printf "%s-%6.6i-%5.5f.bin" savefile i x) $ LB.encode (init, p_layer, p_final)
            LB.writeFile (savefile ++ "-latest.bin") $ LB.encode (init, p_layer, p_final)
-           test <- sampleRNN 100 init layer p_layer finalx p_final
+           test <- sampleRNN 100 init layer p_layer finalx p_final (\_ -> pure())
            putStrLn test
 
      deepseqM (tvec, ovec)
@@ -309,7 +309,10 @@ main = do
      (initial, p_layer, p_final) <- LB.decode <$> LB.readFile initpath
      deepseqM (initial, p_layer, p_final)
 
-     text <- sampleRNN (fromMaybe maxBound length) initial layer p_layer finalx p_final
+     -- (\_ -> pure())
+     text <- sampleRNN (fromMaybe maxBound length) initial layer p_layer finalx p_final (\_ -> pure())
+     -- (\((x, y), z) -> print $ map (V.sum . V.map abs) [getBlob x,getBlob y,getBlob z])
+     -- text <- sampleRNN (fromMaybe maxBound length) initial layer p_layer finalx p_final
      putStrLn text
 
    CheckDeriv -> do

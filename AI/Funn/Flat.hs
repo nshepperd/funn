@@ -26,6 +26,7 @@ import           Foreign.Ptr
 import           System.IO.Unsafe
 
 import           AI.Funn.Network
+import           AI.Funn.Common
 
 newtype Blob (n :: Nat) = Blob { getBlob :: S.Vector Double }
                         deriving (Show, Read)
@@ -44,6 +45,9 @@ instance Derivable (Blob n) where
 
 instance NFData (Blob n) where
   rnf (Blob v) = rnf v
+
+instance CheckNAN (Blob n) where
+  check s (Blob xs) b = check s xs b
 
 generateBlob :: forall f n. (Applicative f, KnownNat n) => f Double -> f (Blob n)
 generateBlob f = Blob . V.fromList <$> sequenceA (replicate n f)

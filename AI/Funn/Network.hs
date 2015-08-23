@@ -42,6 +42,11 @@ instance Monoid Parameters where
   {-# INLINE mappend #-}
   mappend (Parameters x) (Parameters y) = Parameters (x `mappend` y)
 
+instance CheckNAN Parameters where
+  check s (Parameters xs) b = if V.any (\x -> isNaN x || isInfinite x) xs then
+                                error ("[" ++ s ++ "] checkNaN -- " ++ show b)
+                              else ()
+
 -- NEURALDATA
 
 class VectorSpace d where

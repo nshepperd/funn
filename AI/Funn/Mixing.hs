@@ -24,8 +24,9 @@ import           Foreign.C
 import           Foreign.Ptr
 import           System.IO.Unsafe
 
-import           AI.Funn.Network
+import           AI.Funn.Common
 import           AI.Funn.Flat
+import           AI.Funn.Network
 
 foreign import ccall "layer_resize_forward" resize_forward_ffi :: CInt -> CInt -> Ptr Double -> Ptr Double -> IO ()
 foreign import ccall "layer_resize_backward" resize_backward_ffi :: CInt -> CInt -> Ptr Double -> Ptr Double -> IO ()
@@ -56,6 +57,7 @@ resizeLayer = Network eval 0 (pure mempty)
     eval _ input = let out = resize_forward a b (getBlob input)
                        backward delta = let δ = resize_backward a b (getBlob delta)
                                         in return (Blob δ, [])
+                       -- !_ = check "resizeLayer" out (input, a, b)
                    in return (Blob out, 0, backward)
 
     a,b :: Int
@@ -114,6 +116,7 @@ biasLayer = Network ev n initial
   where
     ev pars input = let out = Blob (getBlob input + getParameters pars)
                         backward δ = return (δ, [Parameters (getBlob δ)])
+                        -- !_ = check "biasLayer" out (pars, input)
                     in return (out, 0, backward)
 
     initial = pure (Parameters (V.replicate n 0))
@@ -128,6 +131,7 @@ mixLayer = Network eval (3*n) initial
                           backward delta = let di = mix_backward n table (getParameters pars) (getBlob delta)
                                                dp = mix_backward_params n table (getBlob input) (getBlob delta)
                                            in return (Blob di, [Parameters dp])
+                          -- !_ = check "mixLayer" out (pars, input)
                       in return (Blob out, 0, backward)
 
     initial = Parameters <$> V.replicateM (3*n) (normal 0 0.5)
