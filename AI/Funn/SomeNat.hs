@@ -13,6 +13,9 @@ import           Data.Function
 import           Data.Monoid
 import           Data.Proxy
 
+import           Data.Constraint
+import           Unsafe.Coerce
+
 import           Data.Functor.Identity
 
 import           Data.Random
@@ -36,6 +39,14 @@ withNat :: Integer -> (forall n. (KnownNat n) => Proxy n -> r) -> r
 withNat n f = case someNatVal n of
                Just (SomeNat proxy) -> f proxy
                Nothing              -> error ("withNat: negative value (" ++ show n ++ ")")
+
+dict :: (KnownNat n) => Proxy n -> Dict (KnownNat n)
+dict Proxy = Dict
+
+infixl 7 %*
+(%*) :: forall a b. Dict (KnownNat a) -> Dict (KnownNat b) -> Dict (KnownNat (a*b))
+Dict %* Dict = case someNatVal (natVal (Proxy :: Proxy a) * natVal (Proxy :: Proxy b)) of
+                Just (SomeNat p) -> unsafeCoerce (dict p)
 
 weakenL :: forall m c. (Monad m) => Integer -> (forall n. (KnownNat n) => Network m (Blob n) c) -> Network m SBlob c
 weakenL n network = case someNatVal n of
