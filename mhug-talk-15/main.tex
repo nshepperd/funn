@@ -8,23 +8,24 @@
 \date{\today}
 \author{Neil Shepperd}
 
+\newenvironment{xframe}[1][]{\begin{frame}[fragile,environment=xframe,#1]}{\end{frame}}
+
 \begin{document}
 \maketitle
 
 %% \section{The Problem}
-
-\begin{frame}{The Problem}
+\begin{xframe}{The Problem}
   A neural network should...
   \pause
   \begin{enumerate}
-  \item Take some input \pause
-  \item Take some parameters \pause
-  \item Produce an output \pause
-  \item Produce a gradient
+  \item Take some input $\mathbf{x}$ \pause
+  \item Take some parameters $\mathbf{W}$ \pause
+  \item Produce an output ($\mathbf{y}, \mathcal{L}$) \pause
+  \item Produce a gradient $\frac{d\mathcal{L}}{d(\mathbf{W},\mathbf{x})}$
   \end{enumerate}
-\end{frame}
+\end{xframe}
 
-\begin{frame}[fragile]{The Solution}
+\begin{xframe}{The Solution?}
   Didn't I just describe the space of differentiable functions? \\
   There's an ekmett library for that\texttrademark \pause --- \textbf{ad}.
 
@@ -39,18 +40,21 @@
   \pause
 
   The performance on thousands of variables is not so great.
-\end{frame}
+  And we want to be able to export to GPU.
+\end{xframe}
 
-\begin{frame}{Differentiable Functions}
-  Let's backtrack-
+\begin{xframe}{Differentiable Functions}
+  Let's backtrack a bit.
 
   Differentiable functions \emph{do} form a category.
 
   \[ \frac{d}{dx} \text{id}(x) = 1 \]
   \[ \frac{d}{dx} (g \circ f)(x) = f'(x) g'(f(x)) \]
-\end{frame}
 
-\begin{frame}[fragile]{A Category}
+  (A subcategory of ``functions between vector spaces''.)
+\end{xframe}
+
+\begin{xframe}{A Category}
   So let's build a category interface.
 
   \begin{minted}{haskell}
@@ -59,9 +63,9 @@ data Network a b = ...
 id :: Network a a
 (>>>) :: Network a b -> Network b c -> Network a c
   \end{minted}
-\end{frame}
+\end{xframe}
 
-\begin{frame}[fragile]{Networks}
+\begin{xframe}{Networks}
   I spent quite a while experimenting with different designs.
 
   Still not finished yet. But right now:
@@ -78,12 +82,12 @@ id :: Network a a
     }
   \end{minted}
 
-  Monad, allowing effects -- eg. randomness: dropout units!.
+  Monad, allowing effects -- eg. randomness for dropout units.
 
-  Take parameters, return output together with contribution to loss function and a continuation to calculate gradient on the way back.
-\end{frame}
+  Take parameters, produce output together with contribution to loss function and a callback to calculate gradient on the way back.
+\end{xframe}
 
-%% \begin{frame}[fragile]{I'm not done}
+%% \begin{xframe}{I'm not done}
 %%   Most of this stuff not necessary:
 
 %%   \begin{minted}{haskell}
@@ -93,18 +97,18 @@ id :: Network a a
 %%   \end{minted}
 
 %%   could suffice.
-%% \end{frame}
+%% \end{xframe}
 
-\begin{frame}[fragile]{Category Interface}
+\begin{xframe}{Category Interface}
   \begin{minted}{haskell}
 data Network m a b = ...
 
 id :: Network m a a
 (>>>) :: Network m a b -> Network m b c -> Network m a c
   \end{minted}
-\end{frame}
+\end{xframe}
 
-\begin{frame}[fragile]{Category Interface -- id}
+\begin{xframe}{Category Interface -- id}
   \begin{minted}{haskell}
     id :: (Monad m) => Network m a a
     id = Network ev 0 (return mempty)
@@ -112,9 +116,9 @@ id :: Network m a a
       ev _ a = return (a, 0, backward)
       backward b = return (b, [])
   \end{minted}
-\end{frame}
+\end{xframe}
 
-\begin{frame}[fragile]{Category Interface -- ($>>>$)}
+\begin{xframe}{Category Interface -- ($>>>$)}
   \begin{minted}{haskell}
 (>>>) :: (Monad m) => Network m a b -> Network m b c -> Network m a c
 (>>>) one two = Network ev (params one + params two) ...
@@ -128,9 +132,9 @@ id :: Network m a a
                                return (da, dpar1 <> dpar2)
          return (c, cost1 + cost2, backward)
   \end{minted}
-\end{frame}
+\end{xframe}
 
-\begin{frame}[fragile]{Monoidal Category}
+\begin{xframe}{Monoidal Category}
   We're really a sort of monoidal category:
 
   \begin{minted}{haskell}
@@ -143,24 +147,37 @@ id :: Network m a a
     swap :: Network m (a,b) (b,a)
   \end{minted}
 
-\end{frame}
+\end{xframe}
 
-\begin{frame}[fragile]{Statically Checked Dimensions}
+\begin{xframe}{Data -- Statically Checked Dimensions}
+  Usual unit of data storage for plain neural networks is a fixed length vector.
+
   \begin{minted}{haskell}
     import GHC.TypeLits
     import qualified Data.Vector.Storable as S
     data Blob (n :: Nat) = Blob { getBlob :: S.Vector Double }
+    instance Derivable (Blob n) where
+        type D (Blob n) = Blob n
+  \end{minted}
 
+  Using type-level nats we ensure correct construction of the network.
+
+  And - dimensions for each layer can sometimes be inferred
+\end{xframe}
+
+\begin{xframe}{Data -- Basic Operations}
+  \begin{minted}{haskell}
     fcLayer :: Network m (Blob n1) (Blob n2)
     sigmoidLayer :: Network m (Blob n) (Blob n)
     quadraticCost :: Network m (Blob n, Blob n) ()
     crossEntropyCost :: Network m (Blob n, Blob n) ()
+    softmaxCost :: Network m (Blob n, Int) ()
   \end{minted}
 
-  Type-level nats -- dimensions for each layer can also be inferred
-\end{frame}
+  Softmax is not entirely safe since the domain of the Int is not constrained...
+\end{xframe}
 
-\begin{frame}[fragile]{Using this}
+\begin{xframe}{Using this}
   \begin{minted}{haskell}
     type Layer = Network Identity
     let network :: Layer (Blob 2) (Blob 1)
@@ -171,7 +188,7 @@ id :: Network m a a
     let training :: Layer (Blob 2, Blob 1) ()
         training = left network >>> quadraticCost
   \end{minted}
-\end{frame}
+\end{xframe}
 
 
 \end{document}

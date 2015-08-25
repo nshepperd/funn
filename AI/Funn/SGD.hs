@@ -1,5 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
-module AI.Funn.SGD (sgd, defaultSave) where
+module AI.Funn.SGD (sgd, defaultSave, vectorSource, sgd') where
 
 import           Control.Monad
 import           Data.Foldable
@@ -9,6 +9,8 @@ import           Data.Functor.Identity
 import qualified Data.Vector.Generic as V
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as M
+
+import           Data.Random
 
 import           Data.IORef
 
@@ -21,6 +23,9 @@ import qualified Numeric.LinearAlgebra.HMatrix as HM
 import           AI.Funn.Network
 
 foreign import ccall "vector_add" ffi_vector_add :: CInt -> Ptr Double -> Ptr Double -> IO ()
+
+sampleIO :: RVar a -> IO a
+sampleIO v = runRVar v StdRandom
 
 {-# NOINLINE vector_add #-}
 vector_add :: M.IOVector Double -> S.Vector Double -> IO ()
@@ -69,11 +74,38 @@ sgd lr network initial_pars source save = go initial_pars 0
         new_pars = pars `addTo` (map (scaleParameters (-lr)) dpars)
       go new_pars (i+1)
 
-defaultSave :: IO (Int -> Parameters -> Double -> Double -> IO ())
-defaultSave = go <$> newIORef 0
+sgd' :: Double -> Network Identity p () -> IO p -> (Int -> Parameters -> Double -> Double -> IO ()) -> IO ()
+sgd' lr network source save = do initial_pars <- sampleIO (initialise network)
+                                 go initial_pars 0
   where
-    go ref i p c r = do
-      modifyIORef' ref (\x -> 0.99 * x + 0.01 * c)
-      average_cost <- readIORef ref
+    go !pars !i = do
+      input <- source
+      let
+        (_, cost, k) = runIdentity $ evaluate network pars input
+        (_, dpars) = runIdentity $ k ()
+        gpn = abs $ norm (fold dpars) / norm pars
+      save i pars cost gpn
+      let
+        new_pars = pars `addTo` (map (scaleParameters (-lr)) dpars)
+      go new_pars (i+1)
+
+defaultSave :: IO (Int -> Parameters -> Double -> Double -> IO ())
+defaultSave = go <$> newIORef 0 <*> newIORef 0
+  where
+    go ref_total ref_count i p c r = do
+      modifyIORef' ref_total (smooth c)
+      modifyIORef' ref_count (smooth 1)
+      average_cost <- do total <- readIORef ref_total
+                         count <- readIORef ref_count
+                         return (total / count)
       when (i `mod` 100 == 0) $ do
         putStrLn $ show i ++ " " ++ show average_cost
+
+    smooth x o = α * o + (1 - α) * x
+
+    α = 0.99
+
+vectorSource :: V.Vector v a => v a -> IO a
+vectorSource values = do let n = V.length values
+                         i <- runRVar (uniform 0 (n-1)) StdRandom
+                         return (values V.! i)

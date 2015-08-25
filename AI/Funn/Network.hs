@@ -7,6 +7,7 @@ module AI.Funn.Network (
   Network(..),
   runNetwork, runNetwork', runNetwork_,
   left, right, (>>>),
+  (***), idWith,
   assocL, assocR, swap
   ) where
 
@@ -149,6 +150,12 @@ net_empty = Network ev 0 (return mempty)
     ev _ a = return (a, 0, backward)
     backward b = return (b, [])
 
+idWith :: (Monad m) => proxy a -> Network m a a
+idWith _ = net_empty
+
 instance Monad m => Category (Network m) where
   id = net_empty
   (.) = flip connect
+
+infixr 3 ***
+one *** two = left one >>> right two
