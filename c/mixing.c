@@ -74,3 +74,34 @@ void layer_mix_backward_params(const int N, const int* table, const double* inpu
     dparams += 3;
   }
 }
+
+
+
+
+
+void layer_mix2_forward(const int N, const int* table, const double* params, const double* input, double* output) {
+  for(int i = 0; i < N; i++) {
+    output[i] = (input[table[0]] * params[0]
+                 + input[table[1]] * params[1]);
+    table += 2;
+    params += 2;
+  }
+}
+
+void layer_mix2_backward(const int N, const int* table, const double* params, const double* delta, double* din) {
+  for(int i = 0; i < N; i++) {
+    din[table[0]] += params[0] * delta[i];
+    din[table[1]] += params[1] * delta[i];
+    table += 2;
+    params += 2;
+  }
+}
+
+void layer_mix2_backward_params(const int N, const int* table, const double* input, const double* delta, double* dparams) {
+  for(int i = 0; i < N; i++) {
+    dparams[0] = input[table[0]] * delta[i];
+    dparams[1] = input[table[1]] * delta[i];
+    table += 2;
+    dparams += 2;
+  }
+}

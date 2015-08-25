@@ -2,18 +2,25 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
-module AI.Funn.Mixing (freeLayer, biasLayer) where
+module AI.Funn.Mixing (freeLayer, biasLayer, hierLayer) where
 
 import           GHC.TypeLits
 
 import           Control.Applicative
+import           Control.Applicative.Backwards
+import           Control.Monad
 import           Data.Foldable
-import           Data.Traversable
 import           Data.Monoid
+import           Data.Traversable
+
+import           Control.Monad.State.Lazy as State
+
+import           Data.Bits
 import           Data.Proxy
 import           Data.Random
 
 import           Control.DeepSeq
+import           Numeric.Search.Range
 
 import           Data.Vector (Vector)
 import qualified Data.Vector.Generic as V
@@ -27,6 +34,7 @@ import           System.IO.Unsafe
 import           AI.Funn.Common
 import           AI.Funn.Flat
 import           AI.Funn.Network
+import           AI.Funn.SomeNat
 
 foreign import ccall "layer_resize_forward" resize_forward_ffi :: CInt -> CInt -> Ptr Double -> Ptr Double -> IO ()
 foreign import ccall "layer_resize_backward" resize_backward_ffi :: CInt -> CInt -> Ptr Double -> Ptr Double -> IO ()
@@ -153,3 +161,92 @@ mixLayer = Network eval (3*n) initial
       where
         part1 = V.generate (V.length vs `div` 2) (\i -> vs V.! (i*2+1))
         part2 = V.generate ((V.length vs + 1) `div` 2) (\i -> vs V.! (i*2))
+
+
+
+
+------ MIX2
+
+foreign import ccall "layer_mix2_forward" mix2_forward_ffi :: CInt -> Ptr CInt -> Ptr Double -> Ptr Double -> Ptr Double -> IO ()
+foreign import ccall "layer_mix2_backward" mix2_backward_ffi :: CInt -> Ptr CInt -> Ptr Double -> Ptr Double -> Ptr Double -> IO ()
+foreign import ccall "layer_mix2_backward_params" mix2_backward_params_ffi :: CInt -> Ptr CInt -> Ptr Double -> Ptr Double -> Ptr Double -> IO ()
+
+mix2_forward :: Int -> S.Vector CInt -> S.Vector Double -> S.Vector Double -> S.Vector Double
+mix2_forward n = mix_helper mix2_forward_ffi n n
+
+mix2_backward :: Int -> S.Vector CInt -> S.Vector Double -> S.Vector Double -> S.Vector Double
+mix2_backward n = mix_helper mix2_backward_ffi n n
+
+mix2_backward_params :: Int -> S.Vector CInt -> S.Vector Double -> S.Vector Double -> S.Vector Double
+mix2_backward_params n = mix_helper mix2_backward_params_ffi (2*n) n
+
+
+traverseBack :: (Traversable t, Applicative f) => (a -> f b) -> t a -> f (t b)
+traverseBack f = forwards . traverse (Backwards . f)
+
+hierLayer :: forall a b m. (Monad m, KnownNat a, KnownNat b) => Network m (Blob a) (Blob b)
+hierLayer = mix2Layer >>> biasLayer
+
+hierLayer2 :: forall a b m. (Monad m, KnownNat a, KnownNat b) => Network m (Blob a) (Blob b)
+hierLayer2 = withNat n (\(Proxy :: Proxy n) -> (mix2Layer :: Network m (Blob a) (Blob n)) >>> mix2Layer >>> biasLayer)
+  where
+    a,b,d :: Int
+    a = fromIntegral (natVal (Proxy :: Proxy a))
+    b = fromIntegral (natVal (Proxy :: Proxy b))
+
+    -- Smallest power of 2 containing our inputs and outputs
+    Just d = searchFromTo (\d -> 2^d >= max a b) 1 20
+    n = fromIntegral (2^d)
+
+mix2Layer :: forall a b m. (Monad m, KnownNat a, KnownNat b) => Network m (Blob a) (Blob b)
+mix2Layer = Network eval (2*n*d) initial
+  where
+    eval pars input = let parameters :: Vector (S.Vector Double)
+                          parameters = V.generate d (\level -> V.slice (level * 2 * n) (2 * n) (getParameters pars))
+                          input' = resize n (getBlob input)
+                          (inputs, res) = State.runState (traverse go_forward (V.zip parameters table)) input'
+                          backward delta = let delta' = resize n (getBlob delta)
+                                               (deltas, di) = State.runState (traverseBack go_backward (V.zip parameters table)) delta'
+                                               dps = V.zipWith3 go_params table inputs deltas
+                                           in return (Blob (resize a di), Parameters <$> (V.toList dps))
+                      in return (Blob (resize b res), 0, backward)
+
+    initial = Parameters <$> V.replicateM (2*n*d) (normal 0 0.8)
+
+    a,b,d,n :: Int
+    a = fromIntegral (natVal (Proxy :: Proxy a))
+    b = fromIntegral (natVal (Proxy :: Proxy b))
+
+    -- Smallest power of 2 containing our inputs and outputs
+    Just d = searchFromTo (\d -> 2^d >= max a b) 1 20
+    n = 2^d
+
+    go_forward :: (S.Vector Double, S.Vector CInt) -> State.State (S.Vector Double) (S.Vector Double)
+    go_forward (pars,tab) = do
+      input <- get
+      let output = mix2_forward n tab pars input
+      put output
+      return input
+
+    go_backward :: (S.Vector Double, S.Vector CInt) -> State.State (S.Vector Double) (S.Vector Double)
+    go_backward (pars, tab) = do
+      delta <- get
+      let new = mix2_backward n tab pars delta
+      put new
+      return delta
+
+    go_params :: S.Vector CInt -> S.Vector Double -> S.Vector Double -> S.Vector Double
+    go_params tab input delta = mix2_backward_params n tab input delta
+
+    resize :: Int -> S.Vector Double -> S.Vector Double
+    resize n xs
+      | V.length xs < n = xs <> V.replicate (n - V.length xs) 0
+      | V.length xs > n = V.take n xs
+      | otherwise = xs
+
+    -- table of connected values
+    table :: Vector (S.Vector CInt)
+    table = V.generate d $ \level ->
+      V.fromList . fmap fromIntegral $ do
+        i <- [0 .. n-1]
+        [i, i `complementBit` level]

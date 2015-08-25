@@ -87,8 +87,8 @@ descent' initial_s layer p_layer_initial final p_final_initial source save = go 
         mid = feedR (V.init is) (rnnBig layer)
         -- loss :: Network Identity (Vector s, Vector c) ()
         loss = zipWithNetwork_ final
-        lf = (-0.01) :: Double
-        ff = (-0.01) :: Double
+        lf = (-0.0002) :: Double
+        ff = (-0.0002) :: Double
         Identity (ss, _,    kl) = evaluate mid p_layer s
         Identity ((), cost, kf) = evaluate loss p_final (ss,os)
         Identity ((dss, _), [dp_final']) = kf ()
@@ -219,16 +219,16 @@ main = do
     -- layer = assocR >>> right (mergeLayer >>> fcLayer >>> sigmoidLayer) >>> lstmLayer
 
     layer1 :: LayerH (Blob N) (Blob N, Blob 256) (Blob N)
-    layer1 = right (mergeLayer >>> freeLayer >>> biasLayer >>> sigmoidLayer) >>> lstmLayer
+    layer1 = right (mergeLayer >>> hierLayer >>> sigmoidLayer) >>> lstmLayer
 
     layer2 :: LayerH (Blob N) (Blob N) (Blob N)
-    layer2 = right (freeLayer >>> biasLayer >>> sigmoidLayer) >>> lstmLayer
+    layer2 = right (hierLayer >>> sigmoidLayer) >>> lstmLayer
 
     layer :: Layer (((Blob N, Blob N), Blob N), Blob 256) ((Blob N, Blob N), Blob N)
     layer = assocR >>> (layer1 >&> layer2)
 
     finalx :: Network Identity (Hidden, Blob N) (Blob 256)
-    finalx = left mergeLayer >>> mergeLayer >>> freeLayer >>> biasLayer
+    finalx = left mergeLayer >>> mergeLayer >>> hierLayer
 
     final :: Network Identity ((Hidden, Blob N), Int) ()
     final = left finalx >>> softmaxCost
@@ -259,15 +259,19 @@ main = do
      running_count <- newIORef 0
 
      let
-       α = 0.98
+       α :: Double
+       α = 1 - 1 / 500
+
+       chunkSize = 50 :: Int
+
        tvec = V.fromList (B.unpack text) :: U.Vector Word8
        ovec = V.map (\c -> oneofn V.! (fromIntegral c)) (V.convert tvec) :: Vector (Blob 256)
 
        source :: IO (Vector (Blob 256), Vector Int)
-       source = do s <- sampleIO (uniform 0 (V.length tvec - 50))
+       source = do s <- sampleIO (uniform 0 (V.length tvec - chunkSize))
                    let
-                     input = V.slice s 50 ovec
-                     output = V.map fromIntegral (V.convert (V.slice s 50 tvec))
+                     input = V.slice s chunkSize ovec
+                     output = V.map fromIntegral (V.convert (V.slice s chunkSize tvec))
                    return (input, output)
 
        save i init p_layer p_final c = do
@@ -278,7 +282,7 @@ main = do
 
          x <- do q <- readIORef running_average
                  w <- readIORef running_count
-                 return ((q / w) / 49)
+                 return ((q / w) / fromIntegral (chunkSize - 1))
 
          let
            pa = V.sum (V.map abs $ getParameters p_layer) / fromIntegral (params layer)
@@ -293,7 +297,7 @@ main = do
            putStrLn $ printf "[%i] p_final = %f" i pf
 
          when (i `mod` 50 == 0) $ do
-           putStrLn $ show i ++ " " ++ show x ++ " " ++ show (c / 49) ++ "    [" ++ show ((pa, pa_max), (pf, pf_max)) ++ "]"
+           putStrLn $ show i ++ " " ++ show x ++ " " ++ show (c / fromIntegral (chunkSize-1)) ++ "    [" ++ show ((pa, pa_max), (pf, pf_max)) ++ "]"
          when (i `mod` 1000 == 0) $ do
            -- writeFile savefile $ show (init, p_layer, p_final)
            LB.writeFile (printf "%s-%6.6i-%5.5f.bin" savefile i x) $ LB.encode (init, p_layer, p_final)
@@ -328,6 +332,8 @@ main = do
 
     checkGradient $ splitLayer >>> left (freeLayer :: Layer (Blob 50) (Blob 100)) >>> (quadraticCost :: Network Identity (Blob 100, Blob 100) ())
 
+    checkGradient $ splitLayer >>> left (hierLayer :: Layer (Blob 50) (Blob 100)) >>> (quadraticCost :: Network Identity (Blob 100, Blob 100) ())
+
     let benchNetwork net v = do
           pars <- sampleIO (initialise net)
           let f x = runIdentity $ do (o, c, k) <- evaluate net pars x
@@ -336,5 +342,6 @@ main = do
           -- return $ Criterion.nf (runNetwork_ net pars) v
           return $ Criterion.nf f v
 
-    Criterion.benchmark =<< benchNetwork (freeLayer >>> biasLayer :: Network Identity (Blob 1000) (Blob 1000)) unit
-    Criterion.benchmark =<< benchNetwork (fcLayer :: Network Identity (Blob 1000) (Blob 1000)) unit
+    Criterion.benchmark =<< benchNetwork (freeLayer >>> biasLayer :: Network Identity (Blob 511) (Blob 511)) unit
+    Criterion.benchmark =<< benchNetwork (fcLayer :: Network Identity (Blob 511) (Blob 511)) unit
+    Criterion.benchmark =<< benchNetwork (hierLayer :: Network Identity (Blob 511) (Blob 511)) unit
