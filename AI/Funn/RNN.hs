@@ -2,7 +2,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
-module AI.Funn.RNN (runRNN, rnn, rnnBig, zipWithNetwork_) where
+module AI.Funn.RNN (runRNN, rnn, rnnBig, zipWithNetwork_, rnnX) where
 
 import           Control.Applicative
 import           Control.Applicative.Backwards
@@ -114,6 +114,35 @@ rnnBig layer = Network ev (params layer) (initialise layer)
                               let ds = dsA ## dsB
                               put ds
                               return (di, dparl)
+
+    p = params layer
+
+rnnX :: (Monad m) => Network m (s,a) (s,b) -> Network m (s, Vector a) (s, Vector b)
+rnnX layer = Network ev (params layer) (initialise layer)
+  where
+    ev pars (s, inputs) = do (stuff, s') <- runStateT (traverse (go_forward pars) inputs) s
+                             let out = V.map fst stuff
+                                 ks = V.map snd stuff
+                                 α = 1 / fromIntegral (V.length inputs)
+                                 backward (ds', dbs) = do
+                                   (back, ds) <- runStateT (traverseBack go_backward (V.zip ks dbs)) ds'
+                                   let dpar = if V.length inputs > 0 then
+                                                scaleParameters α $ sumParameterList p (V.map snd back)
+                                              else
+                                                Parameters $ V.replicate p 0
+                                       dis = V.map fst back
+                                   return ((ds, dis), [dpar])
+                             return ((s', out), 0, backward)
+
+    go_forward pars a = do s <- get
+                           ((s', b), _, k) <- lift $ evaluate layer pars (s,a)
+                           put s'
+                           return (b, k)
+
+    go_backward (k, db) = do ds' <- get
+                             ((ds, di), dparl) <- lift (k (ds', db))
+                             put ds
+                             return (di, dparl)
 
     p = params layer
 
