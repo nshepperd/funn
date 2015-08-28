@@ -157,7 +157,8 @@ runRNN s_init layer p_layer final p_final inputs o = do
 zipWithNetwork_ :: (Monad m) => Network m (a, b) () -> Network m (Vector a, Vector b) ()
 zipWithNetwork_ network = Network ev (params network) (initialise network)
   where
-    ev pars (as, bs) = do stuff <- traverse (go_forward pars) (V.zip as bs)
+    ev pars (as, bs) = do when (V.length as /= V.length bs) $ error "bad vectors in zipWithNetwork_"
+                          stuff <- traverse (go_forward pars) (V.zip as bs)
                           let cost = V.sum (V.map fst stuff)
                               ks = V.map snd stuff
                               α = 1 / fromIntegral (1 + V.length as)
