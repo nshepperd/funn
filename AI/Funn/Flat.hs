@@ -4,7 +4,9 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 module AI.Funn.Flat (Blob(..),
                      fcLayer, preluLayer, mergeLayer, sigmoidLayer, splitLayer,
-                     quadraticCost, softmaxCost, generateBlob) where
+                     quadraticCost, softmaxCost, generateBlob,
+                     splitBlob, concatBlob
+                     ) where
 
 import           GHC.TypeLits
 
