@@ -137,12 +137,12 @@ swap = Network ev 0 (pure mempty)
 
 connect :: (Monad m) => Network m a b -> Network m b c -> Network m a c
 connect one two = Network ev (params one + params two) (liftA2 (<>) (initialise one) (initialise two))
-  where ev (Parameters par) !a = do (!b, !cost1, !k1) <- evaluate one (Parameters $ V.take (params one) par) a
-                                    (!c, !cost2, !k2) <- evaluate two (Parameters $ V.drop (params one) par) b
-                                    let backward !dc = do (!db, dpar2) <- k2 dc
-                                                          (!da, dpar1) <- k1 db
-                                                          return (da, dpar1 <> dpar2)
-                                    return (c, cost1 + cost2, backward)
+  where ev (Parameters par) a = do (b, cost1, k1) <- evaluate one (Parameters $ V.take (params one) par) a
+                                   (c, cost2, k2) <- evaluate two (Parameters $ V.drop (params one) par) b
+                                   let backward dc = do (db, dpar2) <- k2 dc
+                                                        (da, dpar1) <- k1 db
+                                                        return (da, dpar1 <> dpar2)
+                                   return (c, cost1 + cost2, backward)
 
 net_empty :: (Monad m) => Network m a a
 net_empty = Network ev 0 (return mempty)
