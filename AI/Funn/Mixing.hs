@@ -2,7 +2,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
-module AI.Funn.Mixing (freeLayer, biasLayer, hierLayer) where
+module AI.Funn.Mixing (freeLayer, biasLayer, hierLayer, hierLayer2, hierLayerN) where
 
 import           GHC.TypeLits
 
@@ -250,3 +250,80 @@ mix2Layer = Network eval (2*n*d) initial
       V.fromList . fmap fromIntegral $ do
         i <- [0 .. n-1]
         [i, i `complementBit` level]
+
+
+
+------- mixN
+
+
+foreign import ccall "layer_mixN_forward" mixn_forward_ffi :: CInt -> Ptr CInt -> Ptr Double -> Ptr Double -> Ptr Double -> IO ()
+foreign import ccall "layer_mixN_backward" mixn_backward_ffi :: CInt -> Ptr CInt -> Ptr Double -> Ptr Double -> Ptr Double -> IO ()
+foreign import ccall "layer_mixN_backward_params" mixn_backward_params_ffi :: CInt -> Ptr CInt -> Ptr Double -> Ptr Double -> Ptr Double -> IO ()
+
+mixn_forward :: Int -> Int -> S.Vector CInt -> S.Vector Double -> S.Vector Double -> S.Vector Double
+mixn_forward s n = mix_helper mixn_forward_ffi n (s*n)
+
+mixn_backward :: Int -> Int -> S.Vector CInt -> S.Vector Double -> S.Vector Double -> S.Vector Double
+mixn_backward s n = mix_helper mixn_backward_ffi n (s*n)
+
+mixn_backward_params :: Int -> Int -> S.Vector CInt -> S.Vector Double -> S.Vector Double -> S.Vector Double
+mixn_backward_params s n = mix_helper mixn_backward_params_ffi (s*n) (s*n)
+
+hierLayerN :: forall a b m. (Monad m, KnownNat a, KnownNat b) => Int -> Network m (Blob a) (Blob b)
+hierLayerN s = mixNLayer s >>> biasLayer
+
+mixNLayer :: forall a b m. (Monad m, KnownNat a, KnownNat b) => Int -> Network m (Blob a) (Blob b)
+mixNLayer s = Network eval (s*n*d) initial
+  where
+    eval pars input = let parameters = (V.generate d (\level -> V.slice (level * s * n) (s * n) (getParameters pars)) :: Vector (S.Vector Double))
+                          input' = resize n (getBlob input)
+                          (inputs, res) = State.runState (traverse go_forward (V.zip parameters table)) input'
+                          backward delta = let delta' = resize n (getBlob delta)
+                                               (deltas, di) = State.runState (traverseBack go_backward (V.zip parameters table)) delta'
+                                               dps = V.zipWith3 go_params table inputs deltas
+                                           in return (Blob (resize a di), Parameters <$> (V.toList dps))
+                      in return (Blob (resize b res), 0, backward)
+
+    initial = Parameters <$> V.replicateM (s*n*d) (normal 0 (1 / sqrt (fromIntegral s)))
+
+    a,b,d,n :: Int
+    a = fromIntegral (natVal (Proxy :: Proxy a))
+    b = fromIntegral (natVal (Proxy :: Proxy b))
+
+    -- Smallest power of 2 containing our inputs and outputs
+    Just d = searchFromTo (\d -> 2^d >= max a b) 1 20
+    n = 2^d
+
+    go_forward :: (S.Vector Double, S.Vector CInt) -> State.State (S.Vector Double) (S.Vector Double)
+    go_forward (pars,tab) = do
+      input <- get
+      let output = mixn_forward s n tab pars input
+      put output
+      return input
+
+    go_backward :: (S.Vector Double, S.Vector CInt) -> State.State (S.Vector Double) (S.Vector Double)
+    go_backward (pars, tab) = do
+      delta <- get
+      let new = mixn_backward s n tab pars delta
+      put new
+      return delta
+
+    go_params :: S.Vector CInt -> S.Vector Double -> S.Vector Double -> S.Vector Double
+    go_params tab input delta = mixn_backward_params s n tab input delta
+
+    resize :: Int -> S.Vector Double -> S.Vector Double
+    resize n xs
+      | V.length xs < n = xs <> V.replicate (n - V.length xs) 0
+      | V.length xs > n = V.take n xs
+      | otherwise = xs
+
+    -- table of connected values
+    table :: Vector (S.Vector CInt)
+    table = V.generate d $ \level ->
+      V.fromList . fmap fromIntegral $ do
+        i <- [0 .. n-1]
+        let f bit = let a = (bit `shiftL` level)
+                        part1 = (a .&. (n-1))
+                        part2 = (a `xor` part1) `shiftR` d
+                    in part1 .|. part2
+        fold [[i, i `xor` f bit] | bit <- [0..s-1]]
