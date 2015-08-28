@@ -1,8 +1,8 @@
 include_rules
 
-GHC_LDFLAGS=-package vector -package random-fu -package reinterpret-cast -package hmatrix -package optparse-applicative -package criterion -package constraints -package binary-search
+GHC_LDFLAGS=-package vector -package random-fu -package reinterpret-cast -package hmatrix -package optparse-applicative -package criterion -package constraints -package binary-search -package clock
 
-# vector 'random-fu >= 0.2.6.2' reinterpret-cast hmatrix optparse-applicative criterion constraints binary-search 'logfloat >= 0.13.3.2'
+# vector 'random-fu >= 0.2.6.2' reinterpret-cast hmatrix optparse-applicative criterion constraints binary-search 'logfloat >= 0.13.3.2' clock
 
 run $(HCC) ./*.hs
 : foreach *.o | AI/Funn/*.o c/*.o |> !ghc AI/Funn/*.o c/*.o |> %B

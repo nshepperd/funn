@@ -4,16 +4,20 @@
 
 import           Control.Applicative
 import           Control.Monad
-import           Data.Char
 import           Data.Foldable
-import           Data.IORef
+import           Data.Monoid
+import           Data.Traversable
+
 import           Data.List
 import           Data.Maybe
-import           Data.Monoid
 import           Data.Proxy
-import           Data.Traversable
 import           Data.Word
+import           Data.IORef
+import           Data.Char
+
+import           System.Clock
 import           System.Environment
+import           System.IO
 
 import           Options.Applicative
 
@@ -29,7 +33,6 @@ import           Control.DeepSeq
 import           Data.Coerce
 import           Debug.Trace
 import           GHC.TypeLits
-import           System.IO
 import           System.IO.Unsafe
 
 import           Data.Functor.Identity
@@ -75,7 +78,19 @@ norm :: Parameters -> Double
 norm (Parameters xs) = sqrt $ V.sum $ V.map (^2) xs
 
 clipping_limit :: Double
-clipping_limit = 0.1
+clipping_limit = 0.02
+
+clip :: Parameters -> Parameters -> Parameters
+clip ps ds
+  | V.any (\x -> isInfinite x || isNaN x) (getParameters ds) =
+      trace ("Infinity in gradient, reducing") $ scaleParameters (0.01) ps
+  | total > rel * clipping_limit =
+      trace ("clipping " ++ show (total, rel*clipping_limit)) $ scaleParameters (clipping_limit*rel/total) ds
+  | otherwise = ds
+  where
+    rel = sqrt $ fromIntegral (V.length (getParameters ds))
+    -- xs1 = V.map (max (-50) . min 50) xs
+    total = norm ds
 
 descent' :: (VectorSpace s, s ~ (D s), Derivable s) => s -> Network Identity (s,i) s -> Parameters -> Network Identity (s,o) () -> Parameters -> IO (Vector i, Vector o) -> (Int -> s -> Parameters -> Parameters -> Double -> IO ()) -> IO ()
 descent' initial_s layer p_layer_initial final p_final_initial source save = go initial_s p_layer_initial p_final_initial (0::Int) (Nothing, Nothing, Nothing)
@@ -87,27 +102,23 @@ descent' initial_s layer p_layer_initial final p_final_initial source save = go 
         mid = feedR (V.init is) (rnnBig layer)
         -- loss :: Network Identity (Vector s, Vector c) ()
         loss = zipWithNetwork_ final
-        lf = (-0.0002) :: Double
-        ff = (-0.0002) :: Double
+        lf = (-0.01) :: Double
+        ff = (-0.01) :: Double
         Identity (ss, _,    kl) = evaluate mid p_layer s
         Identity ((), cost, kf) = evaluate loss p_final (ss,os)
         Identity ((dss, _), [dp_final']) = kf ()
         Identity (ds, [dp_layer']) = kl dss
 
-        dp_gpn = (abs $ norm dp_layer' / norm p_layer)
-        df_gpn = (abs $ norm dp_final' / norm p_final)
+        dp_gpn = (abs $ norm dp_layer / norm p_layer)
+        df_gpn = (abs $ norm dp_final / norm p_final)
 
         -- Gradient clipping should avoid exploding gradients
-        dp_layer = if dp_gpn > clipping_limit then
-                     scaleParameters (clipping_limit / dp_gpn) dp_layer'
-                   else dp_layer'
-
-        dp_final = if df_gpn > clipping_limit then
-                     scaleParameters (clipping_limit / df_gpn) dp_final'
-                   else dp_final'
+        dp_layer = clip p_layer dp_layer'
+        dp_final = clip p_final dp_final'
 
       when (i `mod` 100 == 0) $ do
         putStrLn $ "grad/param norm: " ++ show (dp_gpn, df_gpn)
+        putStrLn $ "grad norm: " ++ show (norm dp_layer', norm dp_final', params layer, params final)
 
       save i s p_layer p_final cost
       let
@@ -174,14 +185,12 @@ sampleRNN n s layer p_layer final p_final xxx = go s n
                     one' = left swap >>> assocR >>> right one >>> assocL >>> left swap
                 in one' >>> two'
 
-data Options = Train (Maybe FilePath) FilePath FilePath
+data Options = Train (Maybe FilePath) FilePath (Maybe FilePath) (Maybe FilePath)
              | Sample FilePath (Maybe Int)
              | CheckDeriv
              deriving (Show)
 
-type N = 1000
-type Hidden = (Blob N, Blob N)
-
+type N = 64
 type LayerH h a b = Network Identity (h, a) (h, b)
 
 instance LB.Binary (Blob n) where
@@ -197,7 +206,8 @@ main = do
                          (info (Train
                                 <$> optional (strOption (long "initial" <> action "file"))
                                 <*> strOption (long "input" <> action "file")
-                                <*> strOption (long "output" <> action "file"))
+                                <*> optional (strOption (long "output" <> action "file"))
+                                <*> optional (strOption (long "log" <> action "file")))
                           (progDesc "Train NN."))
                          <>
                          command "sample"
@@ -215,41 +225,79 @@ main = do
   opts <- customExecParser (prefs showHelpOnError) optparser
 
   let
-    -- layer :: Network Identity ((Blob N, Blob N), Blob 256) (Blob N, Blob N)
-    -- layer = assocR >>> right (mergeLayer >>> fcLayer >>> sigmoidLayer) >>> lstmLayer
+    -- layer :: Network Identity (Blob (2*N), Blob 256) (Blob (2*N))
+    -- layer = left splitLayer >>> assocR >>> right (mergeLayer >>> fcLayer >>> sigmoidLayer) >>> lstmLayer >>> mergeLayer
 
-    layer1 :: LayerH (Blob N) (Blob N, Blob 256) (Blob N)
-    layer1 = right (mergeLayer >>> hierLayer >>> sigmoidLayer) >>> lstmLayer
+    connectingLayer :: (KnownNat a, KnownNat b, Monad m) => Network m (Blob a) (Blob b)
+    connectingLayer = fcLayer -- hierLayerN 5 --
 
-    layer2 :: LayerH (Blob N) (Blob N) (Blob N)
-    layer2 = right (hierLayer >>> sigmoidLayer) >>> lstmLayer
+    layer1 :: Layer ((Blob N, Blob N), Blob 256) (Blob N, Blob N)
+    layer1 = assocR >>> right (mergeLayer >>> connectingLayer >>> sigmoidLayer) >>> lstmLayer
 
-    layer :: Layer (((Blob N, Blob N), Blob N), Blob 256) ((Blob N, Blob N), Blob N)
-    layer = assocR >>> (layer1 >&> layer2)
+    layer2 :: Layer ((Blob N, Blob N), Blob N) (Blob N, Blob N)
+    layer2 = assocR >>> right (mergeLayer >>> connectingLayer >>> sigmoidLayer) >>> lstmLayer
 
-    finalx :: Network Identity (Hidden, Blob N) (Blob 256)
-    finalx = left mergeLayer >>> mergeLayer >>> hierLayer
+    dropL :: (da ~ D a, VectorSpace da) => Layer (a, b) b
+    dropL = Network ev 0 (pure mempty)
+      where
+        ev _ (a, b) = let backward db = return ((unit, db), [])
+                      in return (b, 0, backward)
 
-    final :: Network Identity ((Hidden, Blob N), Int) ()
+    dup :: (da ~ D a, VectorSpace da) => Layer a (a, a)
+    dup = Network ev 0 (pure mempty)
+      where
+        ev _ a = let backward (da1,da2) = return ((da1 ## da2), [])
+                 in return ((a,a), 0, backward)
+
+
+    finalx :: Network Identity (Blob (4*N)) (Blob 256)
+    finalx = splitLayer >>> dropL >>> idWith (Proxy :: Proxy (Blob N)) >>> connectingLayer
+
+    final :: Network Identity (Blob (4*N), Int) ()
     final = left finalx >>> softmaxCost
+
+    -- layer :: Layer (((Blob N, Blob N), (Blob N, Blob N)), Blob 256) ((Blob N, Blob N), (Blob N, Blob N))
+    layer :: Layer (Blob (4*N), Blob 256) (Blob (4*N))
+    layer = left (splitLayer >>> (splitLayer *** splitLayer) >>> swap) >>>
+            assocR >>> right (layer1 >>> dup >>> left dropL) >>> assocL >>> left (layer2) >>>
+            (swap >>> mergeLayer *** mergeLayer >>> mergeLayer)
+
+    -- layer :: Layer (Blob (4*N), Blob 256) (Blob (4*N))
+    -- layer = Network ev (params layer1 + params layer2) (liftA2 (<>) (initialise layer1) (initialise layer2))
+    --   where
+    --     ev pars (hidden, input) = do let (hidden1, hidden2) = splitBlob hidden
+    --                                      (hidden1c, hidden1h) = splitBlob hidden1
+    --                                      (hidden2c, hidden2h) = splitBlob hidden2
+    --                                      pars1 = Parameters $ V.take (params layer1) (getParameters pars)
+    --                                      pars2 = Parameters $ V.drop (params layer1) (getParameters pars)
+    --                                  ((layer1c, layer1h), cost1, k1) <- evaluate layer1 pars1 ((hidden1c, hidden1h), input)
+    --                                  ((layer2c, layer2h), cost2, k2) <- evaluate layer2 pars2 ((hidden2c, hidden2h), layer1h)
+    --                                  let output = layer1c `concatBlob` layer1h `concatBlob` layer2c `concatBlob` layer2h
+    --                                      backward d_output = do
+    --                                        let (d_layer1, d_layer2) = splitBlob d_output
+    --                                            (d_layer1c, d_layer1h) = splitBlob d_layer1
+    --                                            (d_layer2c, d_layer2h) = splitBlob d_layer2
+    --                                        (((d_hidden2c, d_hidden2h), d_layer1h_plus), dpars2) <- k2 (d_layer2c, d_layer2h)
+    --                                        (((d_hidden1c, d_hidden1h), d_input), dpars1) <- k1 (d_layer1c, d_layer1h ## d_layer1h_plus)
+    --                                        let d_hidden1 = d_hidden1c `concatBlob` d_hidden1h
+    --                                            d_hidden2 = d_hidden2c `concatBlob` d_hidden2h
+    --                                        return (((d_hidden1 `concatBlob` d_hidden2), d_input), dpars1 <> dpars2)
+    --                                  return (output, cost1 + cost2, backward)
 
     oneofn :: Vector (Blob 256)
     oneofn = V.generate 256 (\i -> blob (replicate i 0 ++ [1] ++ replicate (255 - i) 0))
 
-    -- experiment :: Network Identity ((Blob N, Blob N), Vector (Blob 256)) (Blob 256)
-    -- experiment = rnn layer >>> finalx
-
   print (params layer + params final)
 
   case opts of
-   Train initpath input savefile -> do
+   Train initpath input savefile logfile -> do
      (initial, p_layer, p_final) <- case initpath of
        -- Just path -> read <$> readFile path
        Just path -> LB.decode <$> LB.readFile path
        Nothing -> (,,)
-                  <$> pure ((unit, unit), unit)
-                  <*> sampleIO (initialise layer)
-                  <*> sampleIO (initialise final)
+                  <$> pure unit
+                  <*> sampleIO (initialise layer) -- sampleIO (Parameters <$> V.replicateM (params layer) (uniform (-0.08) 0.08)) --
+                  <*> sampleIO (initialise final) -- sampleIO (Parameters <$> V.replicateM (params layer) (uniform (-0.08) 0.08)) --
 
      deepseqM (initial, p_layer, p_final)
 
@@ -258,9 +306,15 @@ main = do
      running_average <- newIORef 0
      running_count <- newIORef 0
 
+     startTime <- getTime ProcessCPUTime
+
+     logfp <- case logfile of
+               Just logfile -> Just <$> openFile logfile WriteMode
+               Nothing -> pure Nothing
+
      let
        α :: Double
-       α = 1 - 1 / 500
+       α = 1 - 1 / 50
 
        chunkSize = 50 :: Int
 
@@ -284,24 +338,33 @@ main = do
                  w <- readIORef running_count
                  return ((q / w) / fromIntegral (chunkSize - 1))
 
-         let
-           pa = V.sum (V.map abs $ getParameters p_layer) / fromIntegral (params layer)
-           pa_max = V.maximum (V.map abs $ getParameters p_layer)
-         when (pa > 1) $ do
-           putStrLn $ printf "[%i] p_layer = %f" i pa
+         -- let
+         --   pa = V.sum (V.map abs $ getParameters p_layer) / fromIntegral (params layer)
+         --   pa_max = V.maximum (V.map abs $ getParameters p_layer)
+         -- when (pa > 1) $ do
+         --   putStrLn $ printf "[%i] p_layer = %f" i pa
 
-         let
-           pf = V.sum (V.map abs $ getParameters p_final) / fromIntegral (params final)
-           pf_max = V.maximum (V.map abs $ getParameters p_final)
-         when (pf > 1) $ do
-           putStrLn $ printf "[%i] p_final = %f" i pf
+         -- let
+         --   pf = V.sum (V.map abs $ getParameters p_final) / fromIntegral (params final)
+         --   pf_max = V.maximum (V.map abs $ getParameters p_final)
+         -- when (pf > 1) $ do
+         --   putStrLn $ printf "[%i] p_final = %f" i pf
 
+         -- ++ "    [" ++ show ((pa, pa_max), (pf, pf_max)) ++ "]"
          when (i `mod` 50 == 0) $ do
-           putStrLn $ show i ++ " " ++ show x ++ " " ++ show (c / fromIntegral (chunkSize-1)) ++ "    [" ++ show ((pa, pa_max), (pf, pf_max)) ++ "]"
+           now <- getTime ProcessCPUTime
+           let tdiff = fromIntegral (timeSpecAsNanoSecs (now - startTime)) / (10^9) :: Double
+           putStrLn $ printf "[% 11.4f]  %i  %f  %f" tdiff i x (c / fromIntegral (chunkSize-1))
+           case logfp of
+            Just fp -> hPutStrLn fp (printf "%f %i %f" tdiff i x) >> hFlush fp
+            Nothing -> return ()
          when (i `mod` 1000 == 0) $ do
            -- writeFile savefile $ show (init, p_layer, p_final)
-           LB.writeFile (printf "%s-%6.6i-%5.5f.bin" savefile i x) $ LB.encode (init, p_layer, p_final)
-           LB.writeFile (savefile ++ "-latest.bin") $ LB.encode (init, p_layer, p_final)
+           case savefile of
+            Just savefile -> do
+              LB.writeFile (printf "%s-%6.6i-%5.5f.bin" savefile i x) $ LB.encode (init, p_layer, p_final)
+              LB.writeFile (savefile ++ "-latest.bin") $ LB.encode (init, p_layer, p_final)
+            Nothing -> return ()
            test <- sampleRNN 100 init layer p_layer finalx p_final (\_ -> pure())
            putStrLn test
 
@@ -324,6 +387,8 @@ main = do
 
     -- checkGradient $ feedR o (softmaxCost :: Network Identity (Blob 256, Int) ())
 
+    checkGradient $ splitLayer >>> left (hierLayerN 4 :: Layer (Blob 50) (Blob 100)) >>> (quadraticCost :: Network Identity (Blob 100, Blob 100) ())
+
     checkGradient $ splitLayer >>> (quadraticCost :: Network Identity (Blob 10, Blob 10) ())
 
     checkGradient $ (fcLayer :: Network Identity (Blob 20) (Blob 20)) >>> splitLayer >>> (quadraticCost :: Network Identity (Blob 10, Blob 10) ())
@@ -333,6 +398,10 @@ main = do
     checkGradient $ splitLayer >>> left (freeLayer :: Layer (Blob 50) (Blob 100)) >>> (quadraticCost :: Network Identity (Blob 100, Blob 100) ())
 
     checkGradient $ splitLayer >>> left (hierLayer :: Layer (Blob 50) (Blob 100)) >>> (quadraticCost :: Network Identity (Blob 100, Blob 100) ())
+
+    checkGradient $ (feedR 7 softmaxCost :: Layer (Blob 10) ())
+
+    checkGradient $ splitLayer >>> left (splitLayer >>> layer) >>> quadraticCost
 
     let benchNetwork net v = do
           pars <- sampleIO (initialise net)
