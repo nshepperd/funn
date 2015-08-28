@@ -1,5 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
-module AI.Funn.SGD (sgd, defaultSave, vectorSource, sgd') where
+module AI.Funn.SGD (sgd, defaultSave, vectorSource, sgd', sgd'') where
 
 import           Control.Monad
 import           Data.Foldable
@@ -74,20 +74,23 @@ sgd lr network initial_pars source save = go initial_pars 0
         new_pars = pars `addTo` (map (scaleParameters (-lr)) dpars)
       go new_pars (i+1)
 
-sgd' :: Double -> Network Identity p () -> IO p -> (Int -> Parameters -> Double -> Double -> IO ()) -> IO ()
-sgd' lr network source save = do initial_pars <- sampleIO (initialise network)
-                                 go initial_pars 0
+type LearningRate = Double
+type Cost = Double
+
+sgd' :: LearningRate -> Parameters -> Network Identity p () -> IO p -> IO [(Cost, Parameters)]
+sgd' lr initial_pars network source = go initial_pars
   where
-    go !pars !i = do
+    go !pars = unsafeInterleaveIO $ do
       input <- source
       let
         (_, cost, k) = runIdentity $ evaluate network pars input
         (_, dpars) = runIdentity $ k ()
-        gpn = abs $ norm (fold dpars) / norm pars
-      save i pars cost gpn
-      let
         new_pars = pars `addTo` (map (scaleParameters (-lr)) dpars)
-      go new_pars (i+1)
+      ((cost,pars) :) <$> go new_pars
+
+sgd'' :: LearningRate -> Network Identity p () -> IO p -> IO [(Cost, Parameters)]
+sgd'' lr network source = do initial_pars <- sampleIO (initialise network)
+                             sgd' lr initial_pars network source
 
 defaultSave :: IO (Int -> Parameters -> Double -> Double -> IO ())
 defaultSave = go <$> newIORef 0 <*> newIORef 0
