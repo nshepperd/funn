@@ -2,7 +2,7 @@ void lstm_forward(const int n,
                   const double* ws, const double* hidden, const double* inputs,
                   double* new_hidden, double* outputs, double* store) {
   for(int i = 0; i < n; i++) {
-    const double x = inputs[0];
+    const double x = 2*inputs[0]-1;
     const double g_i = inputs[1];
     const double g_f = inputs[2];
     const double g_o = inputs[3];
@@ -67,7 +67,7 @@ void lstm_backward(const int n, const double* ws, const double* store, const dou
 
     d_hidden[0] = dh_old;
 
-    d_inputs[0] = dx;
+    d_inputs[0] = dx*2;
     d_inputs[1] = dg_i;
     d_inputs[2] = dg_f;
     d_inputs[3] = dg_o;
