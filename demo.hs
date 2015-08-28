@@ -77,5 +77,12 @@ checkGradient network = do parameters <- sampleIO (initialise network)
     a = fromIntegral (natVal (Proxy :: Proxy a)) :: Int
     ε = 0.000001
 
+xorData :: Vector (Blob 2, Blob 1)
+xorData = V.fromList [
+  (blob [0, 0], blob [0]),
+  (blob [0, 1], blob [1]),
+  (blob [1, 0], blob [1]),
+  (blob [1, 1], blob [0])]
+
 main :: IO ()
 main = return ()

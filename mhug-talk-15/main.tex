@@ -13,7 +13,14 @@
 \begin{document}
 \maketitle
 
-%% \section{The Problem}
+\begin{xframe}{What is this?}
+  A library for ``doing'' neural networks. Creating, training, applying.
+
+  The goal here is to be hopefully compositional and yet reasonably fast.
+
+  \url{https://github.com/nshepperd/funn}
+\end{xframe}
+
 \begin{xframe}{The Problem}
   A neural network should...
   \pause
@@ -177,18 +184,42 @@ id :: Network m a a
   Softmax is not entirely safe since the domain of the Int is not constrained...
 \end{xframe}
 
-\begin{xframe}{Using this}
+\begin{xframe}{Data -- Sequence combinators}
+  Recurrent neural network: ``lifts'' a network to act on sequences
   \begin{minted}{haskell}
-    type Layer = Network Identity
-    let network :: Layer (Blob 2) (Blob 1)
-        network = (fcLayer :: Layer (Blob 2) (Blob 3) >>>
-                  sigmoidLayer                        >>>
-                  (fcLayer :: Layer (Blob 3) (Blob 1))
+    rnn :: Network m (s,i) (s,o) ->
+           Network m (s, Vector i) (s, Vector o)
+  \end{minted}
+  \pause
+  \begin{minted}{haskell}
+    mapNetwork :: Network m a b ->
+                  Network m (Vector a) (Vector b)
 
-    let training :: Layer (Blob 2, Blob 1) ()
-        training = left network >>> quadraticCost
+    zipNetwork :: Network m (a,b) c ->
+                  Network m (Vector a, Vector b) (Vector c)
   \end{minted}
 \end{xframe}
+
+\begin{xframe}{Training}
+  Training is by stochastic gradient descent:
+
+  \begin{minted}{haskell}
+    sgd' :: LearningRate -> Parameters ->
+            Network Identity p () ->
+            IO p -> IO [Parameters]
+  \end{minted}
+
+  (IO is just for random selection of training example, should really use a lazy RandT monad instead...)
+\end{xframe}
+
+\begin{xframe}{Things I wish I had}
+  Some sort of monadic interface
+  \begin{minted}{haskell}
+    do y <- applyNetwork fcLayer x
+       applyNetwork (mergeLayer >>> sigmoidLayer) (x,y)
+  \end{minted}
+\end{xframe}
+
 
 
 \end{document}
