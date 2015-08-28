@@ -63,9 +63,9 @@ fcLayer = Network ev numpar initial
       let w = HM.reshape from (V.slice 0 (from*to) p)
           bs = V.slice (from*to) to p
           output = V.zipWith (+) (w HM.#> input) bs
-          !_ = if any isNaN (V.toList output) then
-                 error $ "NaN: fcLayer output " ++ show (w, bs, input)
-               else ()
+          !_ = check "fcLayer" output (filter (isBad . snd) $ zip [0..] $ V.toList output,
+                                       filter (isBad . snd) $ zip [0..] $ V.toList (V.slice 0 (from*to) p),
+                                       filter (isBad . snd) $ zip [0..] $ V.toList bs)
           backward (Blob !δ) =
             let da = Blob $ HM.tr w HM.#> δ
                 dw = Parameters $ (δ `flat_outer` input)
@@ -102,9 +102,8 @@ sigmoidLayer = Network ev 0 (pure mempty)
   where
     ev _ (Blob !input) =
           let output = V.map σ input
-              !_ = if any isNaN (V.toList output) then
-                     error $ "NaN: sigmoidLayer output " ++ show (input)
-               else ()
+              !_ = check "sigmoidLayer" output (let indices = map fst $ filter (isBad . snd) $ zip [0..] (V.toList output)
+                                                in [(i, input V.! i, output V.! i) | i <- indices])
               backward (Blob !δ) = let di = V.zipWith (\y δ -> y * (1 - y) * δ) output δ
                                    in return (Blob di, [])
           in return (Blob output, 0, backward)

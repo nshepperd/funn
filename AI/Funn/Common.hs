@@ -21,11 +21,14 @@ putVector :: (V.Vector v a) => (a -> B.Put) -> v a -> B.Put
 putVector p u = do B.put (V.length u :: Int)
                    V.mapM_ p u
 
+isBad :: (RealFloat a) => a -> Bool
+isBad x = isNaN x || isInfinite x
 
 class CheckNAN a where
   check :: (Show b) => String -> a -> b -> ()
 
 instance (S.Storable a, RealFloat a) => CheckNAN (S.Vector a) where
+  {-# INLINE check #-}
   check s xs b = if V.any (\x -> isNaN x || isInfinite x) xs then
                    error ("[" ++ s ++ "] checkNaN -- " ++ show b)
                  else ()
