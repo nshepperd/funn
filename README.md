@@ -14,4 +14,4 @@ Parts of the interface are still quite ad-hoc and subject to change.
 MHUG Talk
 ---------
 
-The slides in `/mhug-talk-15` describe an upcoming talk I will present at the melbourne haskell user group.
+The slides in `/mhug-talk-15` describe a mini talk I presented at the Melbourne haskell user group.
