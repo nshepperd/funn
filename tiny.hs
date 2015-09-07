@@ -380,7 +380,7 @@ main = do
               LB.writeFile (savefile ++ "-latest.bin") $ LB.encode (init, p_layer, p_final)
             Nothing -> return ()
            test <- sampleRNN 100 init layer p_layer finalx p_final (\_ -> pure())
-           putStrLn test
+           putStrLn (filter (\c -> not (isControl c) || isSpace c) test)
 
      deepseqM (tvec, ovec)
 
