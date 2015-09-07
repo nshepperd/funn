@@ -8,12 +8,12 @@ import           Data.Foldable
 import           Data.Monoid
 import           Data.Traversable
 
+import           Data.Char
+import           Data.IORef
 import           Data.List
 import           Data.Maybe
 import           Data.Proxy
 import           Data.Word
-import           Data.IORef
-import           Data.Char
 
 import           System.Clock
 import           System.Environment
@@ -23,10 +23,8 @@ import           Options.Applicative
 
 import           Text.Printf
 
-import           Data.Map (Map)
-import qualified Data.Map.Strict as Map
-
 import qualified Data.Binary as LB
+import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
 
 import           Control.DeepSeq
@@ -35,11 +33,11 @@ import           Debug.Trace
 import           GHC.TypeLits
 import           System.IO.Unsafe
 
+import qualified Control.Monad.State.Lazy as SL
 import           Data.Functor.Identity
 import           Data.Random
 import           Data.Random.Distribution.Categorical
-
-import qualified Data.ByteString as B
+import           System.Random
 
 import           Data.Vector (Vector)
 import qualified Data.Vector.Generic as V
@@ -180,6 +178,21 @@ sampleRNN n s layer p_layer final p_final xxx = go s n
     oneofn :: Vector (Blob 256)
     oneofn = V.generate 256 (\i -> blob (replicate i 0 ++ [1] ++ replicate (255 - i) 0))
 
+sampleRNN' :: s -> Network Identity (s, Blob 256) s -> Parameters -> Network Identity s (Blob 256) -> Parameters -> [Word8]
+sampleRNN' s layer p_layer final p_final = SL.evalState (go s) (mkStdGen 1)
+  where
+    go s = do
+      let Blob logps = runNetwork_ final p_final s :: Blob 256
+          exps = V.map exp $ logps
+          factor = 1 / V.sum exps
+          ps = V.map (*factor) exps
+      c <- runRVar (categorical $ zip (V.toList ps) [0..]) StdRandom
+      let new_s = runNetwork_ layer p_layer (s, oneofn V.! fromIntegral c)
+      (c:) <$> go new_s
+
+    oneofn :: Vector (Blob 256)
+    oneofn = V.generate 256 (\i -> blob (replicate i 0 ++ [1] ++ replicate (255 - i) 0))
+
 (>&>) :: (Monad m) => Network m (x1,a) (x2,b) -> Network m (y1,b) (y2,c) -> Network m ((x1,y1), a) ((x2,y2), c)
 (>&>) one two = let two' = assocR >>> right two >>> assocL
                     one' = left swap >>> assocR >>> right one >>> assocL >>> left swap
@@ -202,6 +215,15 @@ type LayerH h a b = Network Identity (h, a) (h, b)
 instance LB.Binary (Blob n) where
   put (Blob xs) = putVector putDouble xs
   get = Blob <$> getVector getDouble
+
+stack :: (Monad m) => Network m (s, a) (s, b) -> Network m (t, b) (t, c) -> Network m ((s,t), a) ((s,t), c)
+stack one two = left swap >>> assocR -- (t, (s,a))
+                >>> right one -- (t, (s,b))
+                >>> assocL >>> left swap >>> assocR -- (s, (t, b))
+                >>> right two -- (s, (t, c))
+                >>> assocL -- ((s,t), c)
+
+type H = (Blob N, Blob N)
 
 main :: IO ()
 main = do
@@ -235,9 +257,6 @@ main = do
   opts <- customExecParser (prefs showHelpOnError) optparser
 
   let
-    -- layer :: Network Identity (Blob (2*N), Blob 256) (Blob (2*N))
-    -- layer = left splitLayer >>> assocR >>> right (mergeLayer >>> fcLayer >>> sigmoidLayer) >>> lstmLayer >>> mergeLayer
-
     connectingLayer :: (KnownNat a, KnownNat b, Monad m) => Network m (Blob a) (Blob b)
     connectingLayer = case opts of
                        Options FCLayer _ -> fcLayer
@@ -255,6 +274,9 @@ main = do
         ev _ (a, b) = let backward db = return ((unit, db), [])
                       in return (b, 0, backward)
 
+    dropR :: (da ~ D a, VectorSpace da) => Layer (b, a) b
+    dropR = swap >>> dropL
+
     dup :: (da ~ D a, VectorSpace da) => Layer a (a, a)
     dup = Network ev 0 (pure mempty)
       where
@@ -262,39 +284,17 @@ main = do
                  in return ((a,a), 0, backward)
 
 
-    finalx :: Network Identity (Blob (4*N)) (Blob 256)
+    finalx :: Layer (Blob (4*N)) (Blob 256)
     finalx = splitLayer >>> dropL >>> idWith (Proxy :: Proxy (Blob N)) >>> connectingLayer
 
-    final :: Network Identity (Blob (4*N), Int) ()
+    final :: Layer  (Blob (4*N), Int) ()
     final = left finalx >>> softmaxCost
 
-    -- layer :: Layer (((Blob N, Blob N), (Blob N, Blob N)), Blob 256) ((Blob N, Blob N), (Blob N, Blob N))
     layer :: Layer (Blob (4*N), Blob 256) (Blob (4*N))
-    layer = left (splitLayer >>> (splitLayer *** splitLayer) >>> swap) >>>
-            assocR >>> right (layer1 >>> dup >>> left dropL) >>> assocL >>> left (layer2) >>>
-            (swap >>> mergeLayer *** mergeLayer >>> mergeLayer)
+    layer = left (splitLayer >>> splitLayer *** splitLayer) >>>
+            ((layer1 >>> dup >>> right dropL) `stack` (layer2 >>> dup >>> right dropL)) >>>
+            left (mergeLayer *** mergeLayer >>> mergeLayer) >>> dropR
 
-    -- layer :: Layer (Blob (4*N), Blob 256) (Blob (4*N))
-    -- layer = Network ev (params layer1 + params layer2) (liftA2 (<>) (initialise layer1) (initialise layer2))
-    --   where
-    --     ev pars (hidden, input) = do let (hidden1, hidden2) = splitBlob hidden
-    --                                      (hidden1c, hidden1h) = splitBlob hidden1
-    --                                      (hidden2c, hidden2h) = splitBlob hidden2
-    --                                      pars1 = Parameters $ V.take (params layer1) (getParameters pars)
-    --                                      pars2 = Parameters $ V.drop (params layer1) (getParameters pars)
-    --                                  ((layer1c, layer1h), cost1, k1) <- evaluate layer1 pars1 ((hidden1c, hidden1h), input)
-    --                                  ((layer2c, layer2h), cost2, k2) <- evaluate layer2 pars2 ((hidden2c, hidden2h), layer1h)
-    --                                  let output = layer1c `concatBlob` layer1h `concatBlob` layer2c `concatBlob` layer2h
-    --                                      backward d_output = do
-    --                                        let (d_layer1, d_layer2) = splitBlob d_output
-    --                                            (d_layer1c, d_layer1h) = splitBlob d_layer1
-    --                                            (d_layer2c, d_layer2h) = splitBlob d_layer2
-    --                                        (((d_hidden2c, d_hidden2h), d_layer1h_plus), dpars2) <- k2 (d_layer2c, d_layer2h)
-    --                                        (((d_hidden1c, d_hidden1h), d_input), dpars1) <- k1 (d_layer1c, d_layer1h ## d_layer1h_plus)
-    --                                        let d_hidden1 = d_hidden1c `concatBlob` d_hidden1h
-    --                                            d_hidden2 = d_hidden2c `concatBlob` d_hidden2h
-    --                                        return (((d_hidden1 `concatBlob` d_hidden2), d_input), dpars1 <> dpars2)
-    --                                  return (output, cost1 + cost2, backward)
 
     oneofn :: Vector (Blob 256)
     oneofn = V.generate 256 (\i -> blob (replicate i 0 ++ [1] ++ replicate (255 - i) 0))
@@ -390,11 +390,15 @@ main = do
      (initial, p_layer, p_final) <- LB.decode <$> LB.readFile initpath
      deepseqM (initial, p_layer, p_final)
 
+     print $ V.maximum (getParameters p_layer)
+
      -- (\_ -> pure())
-     text <- sampleRNN (fromMaybe maxBound length) initial layer p_layer finalx p_final (\_ -> pure())
+     -- text <- sampleRNN (fromMaybe maxBound length) initial layer p_layer finalx p_final (\_ -> pure())
      -- (\((x, y), z) -> print $ map (V.sum . V.map abs) [getBlob x,getBlob y,getBlob z])
-     -- text <- sampleRNN (fromMaybe maxBound length) initial layer p_layer finalx p_final
-     putStrLn text
+     let text = sampleRNN' initial layer p_layer finalx p_final
+     LB.putStrLn . LB.pack $ case length of
+                 Just n -> take n text
+                 Nothing -> text
 
    CheckDeriv -> do
     -- checkGradient $ splitLayer >>> rnn layer inputs >>> feedR o final
