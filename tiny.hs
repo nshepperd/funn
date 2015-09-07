@@ -185,12 +185,18 @@ sampleRNN n s layer p_layer final p_final xxx = go s n
                     one' = left swap >>> assocR >>> right one >>> assocL >>> left swap
                 in one' >>> two'
 
-data Options = Train (Maybe FilePath) FilePath (Maybe FilePath) (Maybe FilePath)
-             | Sample FilePath (Maybe Int)
-             | CheckDeriv
+data LayerChoice = FCLayer | HierLayer Int
+                 deriving (Show)
+
+data Options = Options LayerChoice Commands
              deriving (Show)
 
-type N = 64
+data Commands = Train (Maybe FilePath) FilePath (Maybe FilePath) (Maybe FilePath)
+              | Sample FilePath (Maybe Int)
+              | CheckDeriv
+              deriving (Show)
+
+type N = 256
 type LayerH h a b = Network Identity (h, a) (h, b)
 
 instance LB.Binary (Blob n) where
@@ -201,26 +207,30 @@ main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
 
-  let optparser = (info (subparser $
-                         command "train"
-                         (info (Train
-                                <$> optional (strOption (long "initial" <> action "file"))
-                                <*> strOption (long "input" <> action "file")
-                                <*> optional (strOption (long "output" <> action "file"))
-                                <*> optional (strOption (long "log" <> action "file")))
-                          (progDesc "Train NN."))
-                         <>
-                         command "sample"
-                         (info (Sample
-                                <$> strOption (long "snapshot" <> action "file")
-                                <*> optional (option auto (long "length")))
-                          (progDesc "Sample output."))
-                         <>
-                         command "check"
-                         (info (pure CheckDeriv)
-                          (progDesc "Check Derivatives."))
-                        )
-                   fullDesc)
+  let optparser = (info (Options
+                         <$> (const FCLayer <$> switch (long "fclayer")
+                              <|> HierLayer <$> option auto (long "hierlayer"))
+                         <*> (subparser $
+                              command "train"
+                              (info (Train
+                                     <$> optional (strOption (long "initial" <> action "file"))
+                                     <*> strOption (long "input" <> action "file")
+                                     <*> optional (strOption (long "output" <> action "file"))
+                                     <*> optional (strOption (long "log" <> action "file"))
+                                    )
+                               (progDesc "Train NN."))
+                              <>
+                              command "sample"
+                              (info (Sample
+                                     <$> strOption (long "snapshot" <> action "file")
+                                     <*> optional (option auto (long "length")))
+                               (progDesc "Sample output."))
+                              <>
+                              command "check"
+                              (info (pure CheckDeriv)
+                               (progDesc "Check Derivatives."))
+                             ))
+                         fullDesc)
 
   opts <- customExecParser (prefs showHelpOnError) optparser
 
@@ -229,7 +239,9 @@ main = do
     -- layer = left splitLayer >>> assocR >>> right (mergeLayer >>> fcLayer >>> sigmoidLayer) >>> lstmLayer >>> mergeLayer
 
     connectingLayer :: (KnownNat a, KnownNat b, Monad m) => Network m (Blob a) (Blob b)
-    connectingLayer = fcLayer -- hierLayerN 5 --
+    connectingLayer = case opts of
+                       Options FCLayer _ -> fcLayer
+                       Options (HierLayer n) _ -> hierLayerN n
 
     layer1 :: Layer ((Blob N, Blob N), Blob 256) (Blob N, Blob N)
     layer1 = assocR >>> right (mergeLayer >>> connectingLayer >>> sigmoidLayer) >>> lstmLayer
@@ -289,7 +301,9 @@ main = do
 
   print (params layer + params final)
 
-  case opts of
+  let Options _ command = opts
+
+  case command of
    Train initpath input savefile logfile -> do
      (initial, p_layer, p_final) <- case initpath of
        -- Just path -> read <$> readFile path
