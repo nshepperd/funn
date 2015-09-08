@@ -124,7 +124,7 @@ biasLayer = Network ev n initial
   where
     ev pars input = let out = Blob (getBlob input + getParameters pars)
                         backward δ = return (δ, [Parameters (getBlob δ)])
-                        -- !_ = check "biasLayer" out (pars, input)
+                        !_ = check "biasLayer" out $ [(i, getBlob input V.! i, getBlob out V.! i, getParameters pars V.! i) | i <- [0 .. n-1], isBad (getBlob out V.! i)]
                     in return (out, 0, backward)
 
     initial = pure (Parameters (V.replicate n 0))
@@ -298,6 +298,10 @@ mixNLayer s = Network eval (s*n*d) initial
     go_forward (pars,tab) = do
       input <- get
       let output = mixn_forward s n tab pars input
+          !_ = check "mixNLayer" output $ [(i, output V.! i,
+                                            [(input V.! (fromIntegral $ tab V.! (j * 2)), pars V.! j)
+                                            | j <- [0 .. s * n - 1], fromIntegral (tab V.! (j * 2 + 1)) == i])
+                                          | i <- [0 .. n-1], isBad (output V.! i)]
       put output
       return input
 
