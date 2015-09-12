@@ -52,6 +52,7 @@ import           AI.Funn.Mixing
 import           AI.Funn.Network
 import           AI.Funn.RNN
 import           AI.Funn.SGD
+import           AI.Funn.Search
 import           AI.Funn.SomeNat
 import           AI.Funn.Common
 
@@ -90,17 +91,17 @@ clip ps ds
     -- xs1 = V.map (max (-50) . min 50) xs
     total = norm ds
 
-dropL :: (da ~ D a, VectorSpace da) => Layer (a, b) b
+dropL :: (Monad m, da ~ D a, VectorSpace da) => Network m (a, b) b
 dropL = Network ev 0 (pure mempty)
   where
     ev _ (a, b) = let backward db = return ((unit, db), [])
                       in return (b, 0, backward)
 
-dropR :: (da ~ D a, VectorSpace da) => Layer (b, a) b
+dropR :: (Monad m, da ~ D a, VectorSpace da) => Network m (b, a) b
 dropR = swap >>> dropL
 
 
-dup :: (da ~ D a, VectorSpace da) => Layer a (a, a)
+dup :: (Monad m, da ~ D a, VectorSpace da) => Network m a (a, a)
 dup = Network ev 0 (pure mempty)
   where
     ev _ a = let backward (da1,da2) = return ((da1 ## da2), [])
@@ -193,6 +194,22 @@ sampleRNN s cfirst layer p_layer final p_final = SL.evalState (go s cfirst) (mkS
     oneofn :: Vector (Blob 256)
     oneofn = V.generate 256 (\i -> blob (replicate i 0 ++ [1] ++ replicate (255 - i) 0))
 
+beamRNN :: Int -> s -> (Blob 256) -> Network Identity (s, Blob 256) (s, t) -> Parameters -> Network Identity t (Blob 256) -> Parameters -> [Word8]
+beamRNN n s cfirst layer p_layer final p_final = beamSearch n (s, cfirst) (stepRNN layer p_layer final p_final)
+
+stepRNN :: Network Identity (s, Blob 256) (s, t) -> Parameters -> Network Identity t (Blob 256) -> Parameters
+           -> ((s, Blob 256) -> [(Word8, (s, Blob 256), Double)])
+stepRNN layer p_layer final p_final = go
+  where
+    go (s, cprev) = let (new_s, t) = runNetwork_ layer p_layer (s, cprev)
+                        logps = getBlob $ runNetwork_ final p_final t
+                        factor = -log (V.sum $ V.map exp $ logps)
+                        ps = V.map (factor +) logps
+                    in [(fromIntegral c, (new_s, oneofn V.! c), ps V.! c + (case chr c of { ' ' -> -0.3; '-' -> -0.1; _ -> 0 })) | c <- [10..127]]
+
+    oneofn :: Vector (Blob 256)
+    oneofn = V.generate 256 (\i -> blob (replicate i 0 ++ [1] ++ replicate (255 - i) 0))
+
 (>&>) :: (Monad m) => Network m (x1,a) (x2,b) -> Network m (y1,b) (y2,c) -> Network m ((x1,y1), a) ((x2,y2), c)
 (>&>) one two = let two' = assocR >>> right two >>> assocL
                     one' = left swap >>> assocR >>> right one >>> assocL >>> left swap
@@ -224,6 +241,9 @@ stack one two = left swap >>> assocR -- (t, (s,a))
                 >>> assocL -- ((s,t), c)
 
 type H = (Blob N, Blob N)
+
+loop :: (Monad m, db ~ D b, VectorSpace db) => Network m (s, (b, a)) (s, b) -> Network m ((s,b), a) ((s,b), b)
+loop network = assocR >>> network >>> right dup >>> assocL
 
 main :: IO ()
 main = do
@@ -262,8 +282,8 @@ main = do
                        Options FCLayer _ -> fcLayer
                        Options (HierLayer n) _ -> hierLayerN n
 
-    layer1 :: Layer ((Blob N, Blob N), Blob 256) (Blob N, Blob N)
-    layer1 = assocR >>> right (mergeLayer >>> connectingLayer >>> sigmoidLayer) >>> lstmLayer
+    layer1 :: Layer ((Blob N, Blob N), (Blob N, Blob 256)) (Blob N, Blob N)
+    layer1 = assocR >>> right (right mergeLayer >>> mergeLayer >>> connectingLayer >>> sigmoidLayer) >>> lstmLayer
 
     layer2 :: Layer ((Blob N, Blob N), Blob N) (Blob N, Blob N)
     layer2 = assocR >>> right (mergeLayer >>> connectingLayer >>> sigmoidLayer) >>> lstmLayer
@@ -274,8 +294,8 @@ main = do
     final :: Layer  (Blob N, Int) ()
     final = left finalx >>> softmaxCost
 
-    layer :: Layer ((H,H), Blob 256) ((H,H), Blob N)
-    layer = (layer1 >>> dup >>> right dropL) `stack` (layer2 >>> dup >>> right dropL)
+    layer :: Layer (((H,H),Blob N), Blob 256) (((H,H),Blob N), Blob N)
+    layer = loop $ (layer1 >>> dup >>> right dropL) `stack` (layer2 >>> dup >>> right dropL)
 
     oneofn :: Vector (Blob 256)
     oneofn = V.generate 256 (\i -> blob (replicate i 0 ++ [1] ++ replicate (255 - i) 0))
@@ -356,8 +376,6 @@ main = do
    Sample initpath length -> do
      (initial, p_layer, p_final) <- LB.decode <$> LB.readFile initpath
      deepseqM (initial, p_layer, p_final)
-
-     print $ V.maximum (getParameters p_layer)
 
      let text = sampleRNN initial (oneofn V.! 0) layer p_layer finalx p_final
      LB.putStrLn . LB.pack $ case length of
