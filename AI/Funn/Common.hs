@@ -29,9 +29,10 @@ class CheckNAN a where
 
 instance (S.Storable a, RealFloat a) => CheckNAN (S.Vector a) where
   {-# INLINE check #-}
-  check s xs b = if V.any (\x -> isNaN x || isInfinite x) xs then
-                   error ("[" ++ s ++ "] checkNaN -- " ++ show b)
-                 else ()
+  check s xs b = ()
+  -- check s xs b = if V.any (\x -> isNaN x || isInfinite x) xs then
+  --                  error ("[" ++ s ++ "] checkNaN -- " ++ show b)
+  --                else ()
 
 instance (CheckNAN a, CheckNAN b) => CheckNAN (a,b) where
   check s (x,y) b = check s x b `seq` check s y b

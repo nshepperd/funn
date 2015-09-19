@@ -1,6 +1,6 @@
 {-# LANGUAGE TypeFamilies, KindSignatures, DataKinds, TypeOperators #-}
 {-# LANGUAGE ScopedTypeVariables, FlexibleContexts #-}
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE BangPatterns, ForeignFunctionInterface #-}
 
 import           Control.Applicative
 import           Control.Monad
@@ -31,6 +31,9 @@ import           Control.DeepSeq
 import           Data.Coerce
 import           Debug.Trace
 import           GHC.TypeLits
+
+import           Foreign.C
+import           Foreign.Ptr
 import           System.IO.Unsafe
 
 import qualified Control.Monad.State.Lazy as SL
@@ -42,6 +45,8 @@ import           System.Random
 import           Data.Vector (Vector)
 import qualified Data.Vector.Generic as V
 import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector.Storable as S
+import qualified Data.Vector.Storable.Mutable as M
 import qualified Numeric.LinearAlgebra.HMatrix as HM
 
 import qualified Criterion
@@ -73,11 +78,41 @@ addParameters (Parameters x) (Parameters y) = Parameters (x + y)
 scaleParameters :: Double -> Parameters -> Parameters
 scaleParameters x (Parameters y) = Parameters (HM.scale x y)
 
+
+
+foreign import ccall "vector_add" ffi_vector_add :: CInt -> Ptr Double -> Ptr Double -> IO ()
+
+{-# NOINLINE vector_add #-}
+vector_add :: M.IOVector Double -> S.Vector Double -> IO ()
+vector_add tgt src = do M.unsafeWith tgt $ \tbuf -> do
+                          S.unsafeWith src $ \sbuf -> do
+                            ffi_vector_add (fromIntegral n) tbuf sbuf
+  where
+    n = V.length src
+
+addToIO :: M.IOVector Double -> [Parameters] -> IO ()
+addToIO target ys = go target (coerce ys :: [S.Vector Double])
+  where
+    go target [] = return ()
+    go target (v:vs) = do
+      vector_add target v
+      go (M.drop (V.length v) target) vs
+
+sumParameterList :: Foldable f => Int -> f [Parameters] -> Parameters
+sumParameterList n xss = Parameters $ unsafePerformIO go
+  where
+    go = do target <- M.replicate n 0
+            traverse_ (addToIO target) xss
+            V.unsafeFreeze target
+
+
+
+
 norm :: Parameters -> Double
 norm (Parameters xs) = sqrt $ V.sum $ V.map (^2) xs
 
 clipping_limit :: Double
-clipping_limit = 0.02
+clipping_limit = 0.04
 
 clip :: Parameters -> Parameters -> Parameters
 clip ps ds
@@ -107,49 +142,61 @@ dup = Network ev 0 (pure mempty)
     ev _ a = let backward (da1,da2) = return ((da1 ## da2), [])
              in return ((a,a), 0, backward)
 
-descent :: (VectorSpace s, s ~ (D s), Derivable s) => s -> Network Identity (s,i) (s,t) -> Parameters -> Network Identity (t,o) () -> Parameters -> IO (Vector i, Vector o) -> (Int -> s -> Parameters -> Parameters -> Double -> IO ()) -> IO ()
-descent initial_s layer p_layer_initial final p_final_initial source save = go initial_s p_layer_initial p_final_initial (0::Int) (Nothing, Nothing, Nothing)
+descent :: forall s i t o. (VectorSpace s, s ~ (D s), Derivable s) => s -> Network Identity (s,i) (s,t) -> Parameters -> Network Identity (t,o) () -> Parameters -> IO (Vector i, Vector o) -> (Int -> s -> Parameters -> Parameters -> Double -> IO ()) -> IO ()
+descent initial_s layer p_layer_initial final p_final_initial source save = do
+  inputs <- getSources
+  let
+    config = SGDConfig 0.01 0.9 scale add run
+    results = runIdentity (sgd config (p_layer_initial, p_final_initial) inputs)
+    -- config = SSVRGConfig 0.1 [round (min 1000 ((2**x) * 2) :: Double) | x <- [0..]] 1000 our_sum scale add run
+    -- results = runIdentity (ssvrg config (p_layer_initial, p_final_initial) inputs)
+    go (i, (cost, (p_layer, p_final), (dp_layer, dp_final))) = do
+      when (i `mod` 100 == 0) $ do
+        let
+          dp_gpn = (abs $ norm dp_layer / norm p_layer)
+          df_gpn = (abs $ norm dp_final / norm p_final)
+        putStrLn $ "grad/param norm: " ++ show (dp_gpn, df_gpn)
+      save i initial_s p_layer p_final cost
+  traverse_ go (zip [0..] results)
+
   where
-    go !s !p_layer !p_final !i (m_s, m_layer, m_final) = do
-      (is, os) <- source
+    getSources = do x <- source
+                    xs <- unsafeInterleaveIO getSources
+                    return (x:xs)
+
+    our_sum xs = let ps = getParameters $ (sumParameterList (params layer + params final)
+                                           (map (\(a,b) -> [a,b]) xs))
+                 in (Parameters (V.take (params layer) ps),
+                     Parameters (V.drop (params layer) ps))
+    -- our_sum xs = foldl1' (\(s1, s2) (x1, x2) -> let t1 = addParameters s1 x1
+    --                                                 t2 = addParameters s2 x2
+    --                                             in t1 `seq` t2 `seq` (t1,t2)) xs
+
+                    --                                let (ones, twos) = unzip xs in
+                  -- (sumParameterList (params layer) (map return ones),
+                  --  sumParameterList (params final) (map return twos))
+
+    scale v (p_layer, p_final) = (scaleParameters v p_layer, scaleParameters v p_final)
+    add (a, b) (c, d) = (addParameters a c, addParameters b d)
+
+    run (p_layer, p_final) (is, os) = do
       let
         -- mid :: Network Identity s (Vector t)
         mid = feedR is (rnnX layer) >>> dropL
         -- loss :: Network Identity (Vector t, Vector o) ()
         loss = zipWithNetwork_ final
-        lf = (-0.01) :: Double
-        ff = (-0.01) :: Double
-        Identity (ts, _,    kl) = evaluate mid p_layer s
-        Identity ((), cost, kf) = evaluate loss p_final (ts,os)
-        Identity ((dts, _), [dp_final']) = kf ()
-        Identity (ds, [dp_layer']) = kl dts
 
-        dp_gpn = (abs $ norm dp_layer / norm p_layer)
-        df_gpn = (abs $ norm dp_final / norm p_final)
+      (ts, _, kl) <- evaluate mid p_layer initial_s
+      ((), cost, kf) <- evaluate loss p_final (ts,os)
+      ((dts, _), [dp_final']) <- kf ()
+      (ds, [dp_layer']) <- kl dts
 
+      let
         -- Gradient clipping should avoid exploding gradients
         dp_layer = clip p_layer dp_layer'
         dp_final = clip p_final dp_final'
 
-      when (i `mod` 100 == 0) $ do
-        putStrLn $ "grad/param norm: " ++ show (dp_gpn, df_gpn)
-        putStrLn $ "grad norm: " ++ show (norm dp_layer', norm dp_final', params layer, params final)
-
-      save i s p_layer p_final cost
-      let
-        -- (new_s, new_m_s) = let δ = case m_s of
-        --                             Just m -> scale (-0.01) ds ## scale (0.9) m
-        --                             Nothing -> scale (-0.01) ds
-        --                    in (s ## δ, Just δ)
-        (new_p_layer, new_m_layer) = momentum lf p_layer dp_layer m_layer
-        (new_p_final, new_m_final) = momentum ff p_final dp_final m_final
-      go s new_p_layer new_p_final (i+1) (m_s, new_m_layer, new_m_final)
-
-    momentum :: Double -> Parameters -> Parameters -> Maybe Parameters -> (Parameters, Maybe Parameters)
-    momentum f par d_par m_par = let δ = case m_par of
-                                          Just m -> scaleParameters f d_par `addParameters` scaleParameters 0.9 m
-                                          Nothing -> scaleParameters f d_par
-                                 in (par `addParameters` δ, Just δ)
+      return (cost, (dp_layer, dp_final))
 
 feedR :: (Monad m) => b -> Network m (a,b) c -> Network m a c
 feedR b network = Network ev (params network) (initialise network)
@@ -221,12 +268,12 @@ data LayerChoice = FCLayer | HierLayer Int
 data Options = Options LayerChoice Commands
              deriving (Show)
 
-data Commands = Train (Maybe FilePath) FilePath (Maybe FilePath) (Maybe FilePath)
+data Commands = Train (Maybe FilePath) FilePath (Maybe FilePath) (Maybe FilePath) Int
               | Sample FilePath (Maybe Int)
               | CheckDeriv
               deriving (Show)
 
-type N = 256
+type N = 10
 type LayerH h a b = Network Identity (h, a) (h, b)
 
 instance LB.Binary (Blob n) where
@@ -259,6 +306,7 @@ main = do
                                      <*> strOption (long "input" <> action "file")
                                      <*> optional (strOption (long "output" <> action "file"))
                                      <*> optional (strOption (long "log" <> action "file"))
+                                     <*> (option auto (long "chunksize") <|> pure 50)
                                     )
                                (progDesc "Train NN."))
                               <>
@@ -305,7 +353,7 @@ main = do
   let Options _ command = opts
 
   case command of
-   Train initpath input savefile logfile -> do
+   Train initpath input savefile logfile chunkSize -> do
      (initial, p_layer, p_final) <- case initpath of
        -- Just path -> read <$> readFile path
        Just path -> LB.decode <$> LB.readFile path
@@ -330,8 +378,6 @@ main = do
      let
        α :: Double
        α = 1 - 1 / 50
-
-       chunkSize = 50 :: Int
 
        tvec = V.fromList (B.unpack text) :: U.Vector Word8
        ovec = V.map (\c -> oneofn V.! (fromIntegral c)) (V.convert tvec) :: Vector (Blob 256)

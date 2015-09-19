@@ -1,5 +1,5 @@
-{-# LANGUAGE BangPatterns #-}
-module AI.Funn.SGD (sgd, defaultSave, vectorSource, sgd', sgd'') where
+{-# LANGUAGE BangPatterns, RecordWildCards #-}
+module AI.Funn.SGD (sgd, sgd', SGDConfig(..), ssvrg, SSVRGConfig(..)) where
 
 import           Control.Monad
 import           Data.Foldable
@@ -10,9 +10,9 @@ import qualified Data.Vector.Generic as V
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as M
 
+import qualified Control.Monad.State.Lazy as SL
 import           Data.Random
-
-import           Data.IORef
+import           System.Random
 
 import           Foreign.C
 import           Foreign.Ptr
@@ -23,9 +23,6 @@ import qualified Numeric.LinearAlgebra.HMatrix as HM
 import           AI.Funn.Network
 
 foreign import ccall "vector_add" ffi_vector_add :: CInt -> Ptr Double -> Ptr Double -> IO ()
-
-sampleIO :: RVar a -> IO a
-sampleIO v = runRVar v StdRandom
 
 {-# NOINLINE vector_add #-}
 vector_add :: M.IOVector Double -> S.Vector Double -> IO ()
@@ -50,65 +47,72 @@ addTo (Parameters xs) ys = Parameters $ unsafePerformIO body
               addToIO target ys
               V.unsafeFreeze target
 
--- addParameters :: Parameters -> Parameters -> Parameters
--- addParameters (Parameters x) (Parameters y) = Parameters (x + y)
+addParameters :: Parameters -> Parameters -> Parameters
+addParameters (Parameters x) (Parameters y) = Parameters (x + y)
 
 scaleParameters :: Double -> Parameters -> Parameters
 scaleParameters x (Parameters y) = Parameters (HM.scale x y)
 
-norm :: Parameters -> Double
-norm (Parameters xs) = sqrt $ V.sum $ V.map (^2) xs
-
-sgd :: (Monad m) => Double -> Network m p () -> Parameters -> m p -> (Int -> Parameters -> Double -> Double -> m ()) -> m ()
-sgd lr network initial_pars source save = go initial_pars 0
-  where
-    go !pars !i = do
-      input <- source
-
-      (_, cost, k) <- evaluate network pars input
-      (_, dpars) <- k ()
-      let
-        gpn = abs $ norm (fold dpars) / norm pars
-      save i pars cost gpn
-      let
-        new_pars = pars `addTo` (map (scaleParameters (-lr)) dpars)
-      go new_pars (i+1)
-
 type LearningRate = Double
+type Momentum = Double
 type Cost = Double
 
-sgd' :: LearningRate -> Parameters -> Network Identity p () -> IO p -> IO [(Cost, Parameters)]
-sgd' lr initial_pars network source = go initial_pars
+data SGDConfig m p i = SGDConfig {
+  sgd_lr :: LearningRate,
+  sgd_momentum :: Momentum,
+  sgd_scale :: Double -> p -> p,
+  sgd_add :: p -> p -> p,
+  sgd_run :: p -> i -> m (Cost, p)
+  }
+
+sgd :: (Monad m) => SGDConfig m p i -> p -> [i] -> m [(Cost, p, p)]
+sgd (SGDConfig{..}) initial_pars source = go initial_pars source Nothing
   where
-    go !pars = unsafeInterleaveIO $ do
-      input <- source
-      let
-        (_, cost, k) = runIdentity $ evaluate network pars input
-        (_, dpars) = runIdentity $ k ()
-        new_pars = pars `addTo` (map (scaleParameters (-lr)) dpars)
-      ((cost,pars) :) <$> go new_pars
+    go pars [] _ = return []
+    go pars (input:xs) moment = do
+      (cost, dpars) <- sgd_run pars input
+      let new_moment = case moment of
+            Nothing -> sgd_scale (-sgd_lr) dpars
+            Just p  -> sgd_scale (-sgd_lr) dpars `sgd_add` sgd_scale sgd_momentum p
+          new_pars = pars `sgd_add` new_moment
+      ((cost,pars,dpars) :) <$> go new_pars xs (Just new_moment)
 
-sgd'' :: LearningRate -> Network Identity p () -> IO p -> IO [(Cost, Parameters)]
-sgd'' lr network source = do initial_pars <- sampleIO (initialise network)
-                             sgd' lr initial_pars network source
-
-defaultSave :: IO (Int -> Parameters -> Double -> Double -> IO ())
-defaultSave = go <$> newIORef 0 <*> newIORef 0
+sgd' :: (Monad m) => LearningRate -> Momentum -> Parameters -> Network m i () -> [i] -> m [(Cost, Parameters, Parameters)]
+sgd' lr momentum initial_pars network source = sgd (SGDConfig lr momentum scaleParameters addParameters run) initial_pars source
   where
-    go ref_total ref_count i p c r = do
-      modifyIORef' ref_total (smooth c)
-      modifyIORef' ref_count (smooth 1)
-      average_cost <- do total <- readIORef ref_total
-                         count <- readIORef ref_count
-                         return (total / count)
-      when (i `mod` 100 == 0) $ do
-        putStrLn $ show i ++ " " ++ show average_cost
+    run pars input = do
+      (_, cost, k) <- evaluate network pars input
+      (_, dpars) <- k ()
+      return (cost, fold dpars)
 
-    smooth x o = α * o + (1 - α) * x
+data SSVRGConfig m p d i = SSVRGConfig {
+  ssvrg_lr :: LearningRate,
+  ssvrg_ks :: [Int],
+  ssvrg_update_rate :: Int,
+  ssvrg_sum :: [d] -> d,
+  ssvrg_scale :: Double -> d -> d,
+  ssvrg_add :: p -> d -> p,
+  ssvrg_run :: p -> i -> m (Cost, d)
+  }
 
-    α = 0.99
 
-vectorSource :: V.Vector v a => v a -> IO a
-vectorSource values = do let n = V.length values
-                         i <- runRVar (uniform 0 (n-1)) StdRandom
-                         return (values V.! i)
+{-# INLINE ssvrg #-}
+ssvrg :: (Monad m) => SSVRGConfig m p d i -> p -> [i] -> m [(Cost, p, d)]
+ssvrg (SSVRGConfig{..}) initial initial_source = part1 initial initial_source (zip ssvrg_ks updates)
+  where
+    part1 p _ [] = return []
+    part1 p source ((k,m):ks) = do
+      let (is, rest) = splitAt k source
+      ds <- traverse (ssvrg_run p) is
+      let ε = ssvrg_scale (1 / fromIntegral k) (ssvrg_sum (map snd ds))
+      part2 p rest ks ε p m
+
+    part2 w    is  ks ε p 0 = part1 p is ks
+    part2 w (i:is) ks ε p m = do
+      (cost, dp) <- ssvrg_run p i
+      (_   , dw) <- ssvrg_run w i
+      let d = ssvrg_sum [dp, ssvrg_scale (-1) dw, ε]
+          new_p = p `ssvrg_add` ssvrg_scale (-ssvrg_lr) d
+      ((cost, p, d) :) <$> (part2 w is ks ε new_p (m-1))
+
+    updates = SL.evalState (let go = (:) <$> runRVar (uniform 1 ssvrg_update_rate) StdRandom <*> go in go) (mkStdGen 7)
