@@ -60,6 +60,7 @@ import           AI.Funn.SGD
 import           AI.Funn.Search
 import           AI.Funn.SomeNat
 import           AI.Funn.Common
+import           AI.Funn.Pointed
 
 type Layer = Network Identity
 
