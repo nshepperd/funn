@@ -2,7 +2,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
-module AI.Funn.Mixing (freeLayer, biasLayer, hierLayer, hierLayer2, hierLayerN) where
+module AI.Funn.Mixing (freeLayer, biasLayer, hierLayer, hierLayer2, hierLayerN, papillonLayer, polyLayer, polyLayer') where
 
 import           GHC.TypeLits
 
@@ -238,12 +238,6 @@ mix2Layer = Network eval (2*n*d) initial
     go_params :: S.Vector CInt -> S.Vector Double -> S.Vector Double -> S.Vector Double
     go_params tab input delta = mix2_backward_params n tab input delta
 
-    resize :: Int -> S.Vector Double -> S.Vector Double
-    resize n xs
-      | V.length xs < n = xs <> V.replicate (n - V.length xs) 0
-      | V.length xs > n = V.take n xs
-      | otherwise = xs
-
     -- table of connected values
     table :: Vector (S.Vector CInt)
     table = V.generate d $ \level ->
@@ -255,6 +249,11 @@ mix2Layer = Network eval (2*n*d) initial
 
 ------- mixN
 
+resize :: Int -> S.Vector Double -> S.Vector Double
+resize n xs
+  | V.length xs < n = xs <> V.replicate (n - V.length xs) 0
+  | V.length xs > n = V.take n xs
+  | otherwise = xs
 
 foreign import ccall "layer_mixN_forward" mixn_forward_ffi :: CInt -> Ptr CInt -> Ptr Double -> Ptr Double -> Ptr Double -> IO ()
 foreign import ccall "layer_mixN_backward" mixn_backward_ffi :: CInt -> Ptr CInt -> Ptr Double -> Ptr Double -> Ptr Double -> IO ()
@@ -315,12 +314,6 @@ mixNLayer s = Network eval (s*n*d) initial
     go_params :: S.Vector CInt -> S.Vector Double -> S.Vector Double -> S.Vector Double
     go_params tab input delta = mixn_backward_params s n tab input delta
 
-    resize :: Int -> S.Vector Double -> S.Vector Double
-    resize n xs
-      | V.length xs < n = xs <> V.replicate (n - V.length xs) 0
-      | V.length xs > n = V.take n xs
-      | otherwise = xs
-
     -- table of connected values
     table :: Vector (S.Vector CInt)
     table = V.generate d $ \level ->
@@ -331,3 +324,123 @@ mixNLayer s = Network eval (s*n*d) initial
                         part2 = (a `xor` part1) `shiftR` d
                     in part1 .|. part2
         fold [[i, i `xor` f bit] | bit <- [0..s-1]]
+
+
+-------------- Papillon -----------------
+
+papillonLayer :: forall a b m. (Monad m, KnownNat a, KnownNat b) => Int -> Network m (Blob a) (Blob b)
+papillonLayer k = papillonMixLayer k >>> biasLayer
+
+papillonMixLayer :: forall a b m. (Monad m, KnownNat a, KnownNat b) => Int -> Network m (Blob a) (Blob b)
+papillonMixLayer k = Network eval (d * n * k) initial
+  where
+    eval pars input = let parameters = (V.generate d (\level -> V.slice (level * k * n) (k * n) (getParameters pars)) :: Vector (S.Vector Double))
+                          input' = resize n (getBlob input)
+                          (inputs, res) = State.runState (traverse go_forward (V.zip parameters table)) input'
+                          backward delta = let delta' = resize n (getBlob delta)
+                                               (deltas, di) = State.runState (traverseBack go_backward (V.zip parameters table)) delta'
+                                               dps = V.zipWith3 go_params table inputs deltas
+                                           in return (Blob (resize a di), Parameters <$> (V.toList dps))
+                      in return (Blob (resize b res), 0, backward)
+
+    initial = Parameters <$> V.replicateM (k*n*d) (normal 0 (1 / sqrt (fromIntegral k)))
+
+    a,b,m,d,n :: Int
+    a = fromIntegral (natVal (Proxy :: Proxy a))
+    b = fromIntegral (natVal (Proxy :: Proxy b))
+    -- k^m * m >= max a b
+    Just m = searchFromTo (\m -> k ^ m * m >= max a b) 1 (ceiling . logBase (fromIntegral k) . fromIntegral $ max a b)
+    d = 2 * m + 1
+    n = k^m * m
+
+    go_forward :: (S.Vector Double, S.Vector CInt) -> State.State (S.Vector Double) (S.Vector Double)
+    go_forward (pars,tab) = do
+      input <- get
+      let output = mixn_forward k n tab pars input
+      put output
+      return input
+
+    go_backward :: (S.Vector Double, S.Vector CInt) -> State.State (S.Vector Double) (S.Vector Double)
+    go_backward (pars, tab) = do
+      delta <- get
+      let new = mixn_backward k n tab pars delta
+      put new
+      return delta
+
+    go_params :: S.Vector CInt -> S.Vector Double -> S.Vector Double -> S.Vector Double
+    go_params tab input delta = mixn_backward_params k n tab input delta
+
+    -- table of connected values
+    table :: Vector (S.Vector CInt)
+    table = V.generate d $ \level ->
+      V.fromList . fmap fromIntegral $ do
+        u <- [0 .. n-1]
+        let l = (m - 1) - (u `mod` m)
+            link i = let x = 1 + i * m * k^l
+                     in (u + x) `mod` n
+        fold [[u, link i] | i <- [0 .. k-1]]
+
+
+-------------- polyLayer -----------------
+
+polyLayer :: forall a b m. (Monad m, KnownNat a, KnownNat b) => Int -> Network m (Blob a) (Blob b)
+polyLayer k = polyMixLayer k k >>> biasLayer
+
+polyLayer' :: forall a b m. (Monad m, KnownNat a, KnownNat b) => Int -> Int -> Network m (Blob a) (Blob b)
+polyLayer' k l = polyMixLayer k l >>> biasLayer
+
+polyMixLayer :: forall a b m. (Monad m, KnownNat a, KnownNat b) => Int -> Int -> Network m (Blob a) (Blob b)
+polyMixLayer k l = Network eval (d * n * l) initial
+  where
+    eval pars input = let parameters = (V.generate d (\level -> V.slice (level * l * n) (l * n) (getParameters pars)) :: Vector (S.Vector Double))
+                          input' = resize n (getBlob input)
+                          (inputs, res) = State.runState (traverse go_forward (V.zip parameters table)) input'
+                          backward delta = let delta' = resize n (getBlob delta)
+                                               (deltas, di) = State.runState (traverseBack go_backward (V.zip parameters table)) delta'
+                                               dps = V.zipWith3 go_params table inputs deltas
+                                           in return (Blob (resize a di), Parameters <$> (V.toList dps))
+                      in return (Blob (resize b res), 0, backward)
+
+    initial = Parameters <$> V.replicateM (l*n*d) (normal 0 (1 / sqrt (fromIntegral l)))
+
+    a,b,m,d,n :: Int
+    a = fromIntegral (natVal (Proxy :: Proxy a))
+    b = fromIntegral (natVal (Proxy :: Proxy b))
+    -- k^m >= max a b
+    m = ceiling . logBase (fromIntegral k) . fromIntegral $ max a b
+    n = k^m
+    d = m
+
+    go_forward :: (S.Vector Double, S.Vector CInt) -> State.State (S.Vector Double) (S.Vector Double)
+    go_forward (pars,tab) = do
+      input <- get
+      let output = mixn_forward l n tab pars input
+      put output
+      return input
+
+    go_backward :: (S.Vector Double, S.Vector CInt) -> State.State (S.Vector Double) (S.Vector Double)
+    go_backward (pars,tab) = do
+      delta <- get
+      let new = mixn_backward l n tab pars delta
+      put new
+      return delta
+
+    go_params :: S.Vector CInt -> S.Vector Double -> S.Vector Double -> S.Vector Double
+    go_params tab input delta = mixn_backward_params l n tab input delta
+
+    -- table of connected values
+    table :: Vector (S.Vector CInt)
+    table = V.replicate d $ V.fromList . fmap fromIntegral $ do
+      u <- [0 .. n-1]
+      let
+        ubase = (u * k) `mod` n
+        link i = rotateG k ubase i
+      fold [[u, link i] | i <- [0 .. l-1]]
+
+-- Generalised 'xor' in arbitrary base
+rotateG :: Int -> Int -> Int -> Int
+rotateG _ a 0 = a
+rotateG _ 0 b = b
+rotateG k a b = let (a', x) = a `divMod` k
+                    (b', y) = b `divMod` k
+                in (rotateG k a' b' * k) + ((x + y) `mod` k)
