@@ -2,7 +2,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
-module AI.Funn.RNN (runRNN, rnn, rnnBig, zipWithNetwork_, rnnX) where
+module AI.Funn.RNN (runRNN, rnn, rnnBig, zipWithNetwork_, rnnX, mapNetwork) where
 
 import           Control.Applicative
 import           Control.Applicative.Backwards
@@ -174,3 +174,27 @@ zipWithNetwork_ network = Network ev (params network) (initialise network)
                                return (cost, k)
 
     go_backward k = k ()
+
+
+
+mapNetwork :: (Monad m) => Network m a b -> Network m (Vector a) (Vector b)
+mapNetwork network = Network ev (params network) (initialise network)
+  where
+    ev pars as = do stuff <- traverse (go_forward pars) as
+                    let
+                      (bs, costs, ks) = V.unzip3 stuff
+                      cost = V.sum costs
+                      α = 1 / fromIntegral (V.length as)
+                      backward dbs = do
+                        back <- traverse go_backward (V.zip ks dbs)
+                        let das = V.map fst back
+                            dpar = sumParameterList (params network) (V.map snd back)
+                            dpar' = if V.length as >= 1 then
+                                      scaleParameters α dpar
+                                    else
+                                      Parameters (V.replicate (params network) 0)
+                        return (das, [dpar'])
+                    return (bs, cost, backward)
+
+    go_forward pars a = evaluate network pars a
+    go_backward (k,db) = k db
