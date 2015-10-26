@@ -422,6 +422,12 @@ main = do
 
     checkGradient $ (feedR 7 softmaxCost :: Layer (Blob 10) ())
 
+    checkGradient $ runPointed $ \(a :: Ref s (Blob 10)) -> do
+      b <- feed a fcLayer
+      ab <- joinP a b
+      c <- feed ab quadraticCost
+      return (c :: Ref s ())
+
     let benchNetwork net v = do
           pars <- sampleIO (initialise net)
           let f x = runIdentity $ do (o, c, k) <- evaluate net pars x
