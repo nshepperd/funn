@@ -2,7 +2,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
-module AI.Funn.LSTM where
+module AI.Funn.Flat.LSTM (lstmDiff) where
 
 import           GHC.TypeLits
 
@@ -22,14 +22,15 @@ import           Foreign.C
 import           Foreign.Ptr
 import           System.IO.Unsafe
 
-import           AI.Funn.Network
-import           AI.Funn.Flat
+import           AI.Funn.Diff.Diff (Derivable(..), Additive(..), Diff(..))
+import           AI.Funn.Flat.Flat
 
 foreign import ccall "lstm_forward" lstmForwardFFI :: CInt -> Ptr Double -> Ptr Double -> Ptr Double -> Ptr Double -> Ptr Double -> Ptr Double -> IO ()
 foreign import ccall "lstm_backward" lstmBackwardFFI :: CInt -> Ptr Double -> Ptr Double -> Ptr Double -> Ptr Double -> Ptr Double -> Ptr Double -> Ptr Double -> IO ()
 
 {-# NOINLINE lstmForward #-}
-lstmForward :: Int -> S.Vector Double -> S.Vector Double -> S.Vector Double -> (S.Vector Double, S.Vector Double, S.Vector Double)
+lstmForward :: Int -> S.Vector Double -> S.Vector Double -> S.Vector Double ->
+               (S.Vector Double, S.Vector Double, S.Vector Double)
 lstmForward n ps hs xs = unsafePerformIO $ do target_hs <- M.replicate n 0 :: IO (M.IOVector Double)
                                               target_ys <- M.replicate n 0 :: IO (M.IOVector Double)
                                               target_store <- M.replicate (8*n) 0 :: IO (M.IOVector Double)
@@ -46,7 +47,8 @@ lstmForward n ps hs xs = unsafePerformIO $ do target_hs <- M.replicate n 0 :: IO
                                               return (new_hs, new_ys, store)
 
 {-# NOINLINE lstmBackward #-}
-lstmBackward :: Int -> S.Vector Double -> S.Vector Double -> S.Vector Double -> S.Vector Double -> (S.Vector Double, S.Vector Double, S.Vector Double)
+lstmBackward :: Int -> S.Vector Double -> S.Vector Double -> S.Vector Double -> S.Vector Double ->
+                (S.Vector Double, S.Vector Double, S.Vector Double)
 lstmBackward n ps store delta_h delta_y = unsafePerformIO $ do
   target_d_ws <- M.replicate (2*n) 0 :: IO (M.IOVector Double)
   target_d_hs <- M.replicate n 0 :: IO (M.IOVector Double)
@@ -64,27 +66,17 @@ lstmBackward n ps store delta_h delta_y = unsafePerformIO $ do
   d_xs <- V.unsafeFreeze target_d_xs
   return (d_ws, d_hs, d_xs)
 
-lstmLayer :: forall n m. (Monad m, KnownNat n) => Network m (Blob n, Blob (4*n)) (Blob n, Blob n)
-lstmLayer = Network eval numpar init
+lstmDiff :: forall n m. (Monad m, KnownNat n) => Diff m (Blob (2*n), (Blob n, Blob (4*n))) (Blob n, Blob n)
+lstmDiff = Diff run
   where
-    eval par (hidden, inputs) = let (new_h, new_y, store) = (lstmForward n (getParameters par)
-                                                             (getBlob hidden)
-                                                             (getBlob inputs))
-                                    -- !_ = if any isNaN (V.toList new_h) then
-                                    --        error ("NaN: new_h " ++ show (par, hidden, inputs))
-                                    --      else ()
-                                    -- !_ = if any isNaN (V.toList new_y) then
-                                    --        error ("NaN: new_y " ++ show (par, hidden, inputs))
-                                    --      else ()
-                                    -- !_ = if any isNaN (V.toList store) then
-                                    --        error ("NaN: store " ++ show (par, hidden, inputs))
-                                    --      else ()
-                                    backward (dh, dy) = let (d_ws, d_hs, d_xs) = (lstmBackward n (getParameters par)
-                                                                                    store (getBlob dh) (getBlob dy))
-                                                        in return ((Blob d_hs, Blob d_xs), [Parameters d_ws])
-                                in return ((Blob new_h, Blob new_y), 0, backward)
-    numpar = 2*n
-    init = return (Parameters (V.replicate (2*n) 1))
+    run (par, (hidden, inputs)) =
+      let (new_h, new_y, store) = (lstmForward n (getBlob par)
+                                   (getBlob hidden)
+                                   (getBlob inputs))
+          backward (dh, dy) = let (d_ws, d_hs, d_xs) = (lstmBackward n (getBlob par)
+                                                        store (getBlob dh) (getBlob dy))
+                              in return (Blob d_ws, (Blob d_hs, Blob d_xs))
+      in return ((Blob new_h, Blob new_y), backward)
 
     n :: Int
     n = fromIntegral (natVal (Proxy :: Proxy n))

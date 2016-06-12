@@ -5,4 +5,4 @@ GHC_LDFLAGS=-package vector -package random-fu -package reinterpret-cast -packag
 # vector 'random-fu >= 0.2.6.2' reinterpret-cast hmatrix optparse-applicative criterion constraints binary-search 'logfloat >= 0.13.3.2' clock
 
 run $(HCC) ./*.hs
-: foreach *.o | AI/Funn/*.o c/*.o |> !ghc AI/Funn/*.o c/*.o |> %B
+: foreach *.o | AI/Funn/*.o AI/Funn/Diff/*.o AI/Funn/Network/*.o AI/Funn/Flat/*.o c/*.o |> !ghc AI/Funn/*.o AI/Funn/Diff/*.o AI/Funn/Network/*.o AI/Funn/Flat/*.o c/*.o |> %B

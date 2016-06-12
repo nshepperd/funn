@@ -1,57 +1,12 @@
 {-# LANGUAGE BangPatterns, RecordWildCards #-}
-module AI.Funn.SGD (sgd, sgd', SGDConfig(..), ssvrg, SSVRGConfig(..)) where
+module AI.Funn.SGD (sgd, SGDConfig(..), ssvrg, SSVRGConfig(..), adam, AdamConfig(..)) where
 
 import           Control.Monad
 import           Data.Foldable
 
-import           Data.Coerce
-import           Data.Functor.Identity
-import qualified Data.Vector.Generic as V
-import qualified Data.Vector.Storable as S
-import qualified Data.Vector.Storable.Mutable as M
-
 import qualified Control.Monad.State.Lazy as SL
 import           Data.Random
 import           System.Random
-
-import           Foreign.C
-import           Foreign.Ptr
-import           System.IO.Unsafe
-
-import qualified Numeric.LinearAlgebra.HMatrix as HM
-
-import           AI.Funn.Network
-
-foreign import ccall "vector_add" ffi_vector_add :: CInt -> Ptr Double -> Ptr Double -> IO ()
-
-{-# NOINLINE vector_add #-}
-vector_add :: M.IOVector Double -> S.Vector Double -> IO ()
-vector_add tgt src = do M.unsafeWith tgt $ \tbuf -> do
-                          S.unsafeWith src $ \sbuf -> do
-                            ffi_vector_add (fromIntegral n) tbuf sbuf
-  where
-    n = V.length src
-
-addToIO :: M.IOVector Double -> [Parameters] -> IO ()
-addToIO target ys = go target (coerce ys :: [S.Vector Double])
-  where
-    go target [] = return ()
-    go target (v:vs) = do
-      vector_add target v
-      go (M.drop (V.length v) target) vs
-
-addTo :: Parameters -> [Parameters] -> Parameters
-addTo (Parameters xs) ys = Parameters $ unsafePerformIO body
-  where
-    body = do target <- V.thaw xs
-              addToIO target ys
-              V.unsafeFreeze target
-
-addParameters :: Parameters -> Parameters -> Parameters
-addParameters (Parameters x) (Parameters y) = Parameters (x + y)
-
-scaleParameters :: Double -> Parameters -> Parameters
-scaleParameters x (Parameters y) = Parameters (HM.scale x y)
 
 type LearningRate = Double
 type Momentum = Double
@@ -76,14 +31,6 @@ sgd (SGDConfig{..}) initial_pars source = go initial_pars source Nothing
             Just p  -> sgd_scale (-sgd_lr) dpars `sgd_add` sgd_scale sgd_momentum p
           new_pars = pars `sgd_add` new_moment
       ((cost,pars,dpars) :) <$> go new_pars xs (Just new_moment)
-
-sgd' :: (Monad m) => LearningRate -> Momentum -> Parameters -> Network m i () -> [i] -> m [(Cost, Parameters, Parameters)]
-sgd' lr momentum initial_pars network source = sgd (SGDConfig lr momentum scaleParameters addParameters run) initial_pars source
-  where
-    run pars input = do
-      (_, cost, k) <- evaluate network pars input
-      (_, dpars) <- k ()
-      return (cost, fold dpars)
 
 data SSVRGConfig m p d i = SSVRGConfig {
   ssvrg_lr :: LearningRate,
@@ -116,3 +63,36 @@ ssvrg (SSVRGConfig{..}) initial initial_source = part1 initial initial_source (z
       ((cost, p, d) :) <$> (part2 w is ks ε new_p (m-1))
 
     updates = SL.evalState (let go = (:) <$> runRVar (uniform 1 ssvrg_update_rate) StdRandom <*> go in go) (mkStdGen 7)
+
+data AdamConfig m p d = Adam {
+  adam_α :: LearningRate,
+  adam_β1 :: Momentum,
+  adam_β2 :: Momentum,
+  adam_ε :: Double,
+  adam_pure_d :: Double -> m d,
+  adam_scale_d :: Double -> d -> m d,
+  adam_add_d :: d -> d -> m d,
+  adam_square_d :: d -> m d,
+  adam_sqrt_d :: d -> m d,
+  adam_divide_d :: d -> d -> m d,
+  adam_update_p :: p -> d -> m p
+  }
+
+adam :: (Monad m) => AdamConfig m p d -> p -> (p -> m d) -> (p -> m r -> m r) -> m r
+adam Adam{..} p0 objective k = do
+  m0 <- adam_pure_d 0
+  v0 <- adam_pure_d 0
+  ε <- adam_pure_d adam_ε
+  let
+    go p0 m0 v0 t0 = do
+      let t = t0 + 1
+      g <- objective p0
+      m <- join $ adam_add_d <$> adam_scale_d adam_β1 m0 <*> adam_scale_d (1 - adam_β1) g
+      g2 <- adam_square_d g
+      v <- join $ adam_add_d <$> adam_scale_d adam_β2 v0 <*> adam_scale_d (1 - adam_β2) g2
+      v2 <- adam_sqrt_d v
+      let αt = adam_α * sqrt (1 - adam_β2^t) / (1 - adam_β1^t)
+      update <- join (adam_divide_d <$> adam_scale_d (-αt) m <*> adam_add_d v2 ε)
+      p <- adam_update_p p0 update
+      k p (go p m v t)
+  go p0 m0 v0 0
