@@ -195,7 +195,8 @@ checkGradient network = do parameters <- sampleIO (initialise network)
                            let (e', _, _) = runNetwork' network parameters' input'
                                δ_expected = sum (V.toList $ V.zipWith (*) (getBlob d_input) d1)
                                             + sum (V.toList $ V.zipWith (*) (getParameters d_parameters) d2)
-                           print (e' - e, δ_expected)
+                               δ_measured = e' - e
+                           print $ abs (δ_measured - δ_expected) / (abs δ_measured + abs δ_expected)
 
   where
     a = fromIntegral (natVal (Proxy :: Proxy a)) :: Int
