@@ -26,6 +26,7 @@ import           Text.Printf
 import qualified Data.Binary as LB
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
+import qualified Data.ByteString.Lazy.Char8 as LC
 
 import           Control.DeepSeq
 import           Data.Coerce
@@ -392,7 +393,7 @@ main = do
               LB.writeFile (printf "%s-%6.6i-%5.5f.bin" savefile i x) $ LB.encode par
               LB.writeFile (savefile ++ "-latest.bin") $ LB.encode par
             Nothing -> return ()
-           LB.putStrLn . LB.pack . take 500 $ sampleRNN unit (oneofn V.! 0) layer par
+           LC.putStrLn . LB.pack . take 500 $ sampleRNN unit (oneofn V.! 0) layer par
 
      deepseqM (tvec, ovec)
 
@@ -403,7 +404,7 @@ main = do
      deepseqM p_layer
 
      let text = sampleRNN unit (oneofn V.! 0) layer p_layer
-     LB.putStrLn . LB.pack $ case length of
+     LC.putStrLn . LB.pack $ case length of
                  Just n -> take n text
                  Nothing -> text
 
