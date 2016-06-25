@@ -381,7 +381,7 @@ main = do
 
          when (i `mod` 50 == 0) $ do
            now <- getTime ProcessCPUTime
-           let tdiff = fromIntegral (timeSpecAsNanoSecs (now - startTime)) / (10^9) :: Double
+           let tdiff = fromIntegral (toNanoSecs (now - startTime)) / (10^9) :: Double
            putStrLn $ printf "[% 11.4f]  %i  %f  %f" tdiff i x (c / fromIntegral (chunkSize-1))
            case logfp of
             Just fp -> hPutStrLn fp (printf "%f %i %f" tdiff i x) >> hFlush fp
