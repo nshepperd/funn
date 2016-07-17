@@ -7,7 +7,8 @@ module AI.Funn.Flat.Flat (Blob(..),
                      fcDiff, preluDiff, reluDiff, sigmoidDiff,
                      mergeDiff, splitDiff, sumDiff, tanhDiff,
                      quadraticCost, softmaxCost, generateBlob,
-                     splitBlob, concatBlob, unsafeBlob, scaleBlob
+                     splitBlob, concatBlob, unsafeBlob, scaleBlob,
+                     adamBlob
                      ) where
 
 import           GHC.TypeLits
@@ -30,6 +31,7 @@ import           Foreign.Ptr
 import           System.IO.Unsafe
 
 import           AI.Funn.Common
+import           AI.Funn.SGD
 import           AI.Funn.Diff.Diff (Diff(..), Additive(..), Derivable(..))
 import qualified AI.Funn.Diff.Diff as Diff
 
@@ -232,3 +234,16 @@ flat_outer u v = unsafePerformIO go
             V.unsafeFreeze target
     n = V.length u
     m = V.length v
+
+adamBlob :: forall m (n :: Nat). (Monad m, KnownNat n) => AdamConfig m (Blob n) (Blob n)
+adamBlob = defaultAdam {
+  adam_pure_d = \x -> generateBlob (pure x),
+  adam_scale_d = \x b -> pure (scaleBlob x b),
+  adam_add_d = plus,
+  adam_square_d = \(Blob b) -> pure $ Blob (V.map (^2) b),
+  adam_sqrt_d = \(Blob b) -> pure $ Blob (V.map sqrt b),
+  adam_divide_d = \(Blob x) (Blob y) -> pure $ Blob (V.zipWith (/) x y),
+  adam_update_p = plus
+  }
+  where
+    n = fromIntegral (natVal (Proxy :: Proxy n))

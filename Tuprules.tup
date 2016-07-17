@@ -1,6 +1,6 @@
 HSROOT=$(TUP_CWD)
 GHC_CFLAGS=-fplugin GHC.TypeLits.KnownNat.Solver -fconstraint-solver-iterations=10 -Wno-partial-type-signatures
 GHC_FLAGS=-O2
+# -auto-all -prof
 include script/rules
 .gitignore
-# -auto-all -prof

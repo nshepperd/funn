@@ -6,7 +6,7 @@ module AI.Funn.Diff.Diff (
   Additive(..), (##), unit,
   Derivable(..),
   Diff(..),
-  runDiff_,
+  runDiff_, runDiffForward,
   first, second, (>>>),
   assocL, assocR, swap,
   fst, snd
@@ -78,6 +78,10 @@ instance (Applicative m) => Additive m Double where
 runDiff_ :: Diff Identity a b -> a -> (b, D b -> D a)
 runDiff_ (Diff f) a = let (b, dba) = runIdentity (f a) in
                        (b, runIdentity . dba)
+
+runDiffForward :: Monad m => Diff m a b -> a -> m b
+runDiffForward d a = do (b, _) <- runDiff d a
+                        return b
 
 diff_id :: (Applicative m) => Diff m a a
 diff_id = Diff (\a -> pure (a, \db -> pure db))

@@ -1,5 +1,5 @@
 {-# LANGUAGE BangPatterns, RecordWildCards #-}
-module AI.Funn.SGD (sgd, SGDConfig(..), ssvrg, SSVRGConfig(..), adam, AdamConfig(..)) where
+module AI.Funn.SGD (sgd, SGDConfig(..), ssvrg, SSVRGConfig(..), adam, AdamConfig(..), defaultAdam) where
 
 import           Control.Monad
 import           Data.Foldable
@@ -96,3 +96,11 @@ adam Adam{..} p0 objective k = do
       p <- adam_update_p p0 update
       k p (go p m v t)
   go p0 m0 v0 0
+
+defaultAdam :: AdamConfig m p d
+defaultAdam = Adam {
+  adam_α = 0.001,
+  adam_β1 = 0.9,
+  adam_β2 = 0.999,
+  adam_ε = 1e-8
+  }

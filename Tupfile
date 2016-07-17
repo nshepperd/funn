@@ -1,8 +1,9 @@
 include_rules
 
-GHC_LDFLAGS=-package vector -package random-fu -package reinterpret-cast -package hmatrix -package optparse-applicative -package criterion -package constraints -package binary-search -package clock -package lens -package ghc-typelits-knownnat
+GHC_LDFLAGS=-package vector -package random-fu -package reinterpret-cast -package hmatrix -package optparse-applicative -package criterion -package constraints -package binary-search -package clock -package lens -package ghc-typelits-knownnat -package hopencl -package file-embed
 
-# vector 'random-fu >= 0.2.6.2' reinterpret-cast hmatrix optparse-applicative criterion constraints binary-search 'logfloat >= 0.13.3.2' clock ghc-typelits-knownnat
+# vector 'random-fu >= 0.2.6.2' reinterpret-cast hmatrix optparse-applicative criterion constraints binary-search 'logfloat >= 0.13.3.2' clock ghc-typelits-knownnat hopencl lens
 
 run $(HCC) ./*.hs
-: foreach *.o | AI/Funn/*.o AI/Funn/Diff/*.o AI/Funn/Network/*.o AI/Funn/Flat/*.o c/*.o |> !ghc AI/Funn/*.o AI/Funn/Diff/*.o AI/Funn/Network/*.o AI/Funn/Flat/*.o c/*.o |> %B
+
+: foreach *.o | AI/Funn/*.o AI/Funn/Diff/*.o AI/Funn/Network/*.o AI/Funn/Flat/*.o c/*.o AI/Funn/CL/*.o |> !ghc AI/Funn/*.o AI/Funn/Diff/*.o AI/Funn/Network/*.o AI/Funn/Flat/*.o AI/Funn/CL/*.o c/*.o |> %B

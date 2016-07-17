@@ -103,21 +103,6 @@ checkGradient network = do input <- sampleIO (generateBlob $ uniform 0 1)
   where
     ε = 0.00001
 
-adamBlob :: forall m n. (Monad m, KnownNat n) => AdamConfig m (Blob n) (Blob n)
-adamBlob = Adam {
-  adam_α = 0.001,
-  adam_β1 = 0.9,
-  adam_β2 = 0.999,
-  adam_ε = 1e-8,
-  adam_pure_d = \x -> generateBlob (pure x),
-  adam_scale_d = \x b -> pure (scaleBlob x b),
-  adam_add_d = plus,
-  adam_square_d = \(Blob b) -> pure $ Blob (V.map (^2) b),
-  adam_sqrt_d = \(Blob b) -> pure $ Blob (V.map sqrt b),
-  adam_divide_d = \(Blob x) (Blob y) -> pure $ Blob (V.zipWith (/) x y),
-  adam_update_p = plus
-  }
-
 unfoldM :: Monad m => Int -> m a -> m [a]
 unfoldM 0 m = return []
 unfoldM n m = (:) <$> m <*> unfoldM (n-1) m
