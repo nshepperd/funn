@@ -3,6 +3,7 @@
 {-# LANGUAGE BangPatterns, ForeignFunctionInterface #-}
 {-# LANGUAGE TypeApplications, PartialTypeSignatures #-}
 {-# LANGUAGE FlexibleInstances, MultiParamTypeClasses #-}
+{-# LANGUAGE GADTs #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 module Main where
 import           Control.Applicative
@@ -35,6 +36,7 @@ import qualified Data.ByteString.Lazy.Char8 as LC
 
 import           Control.DeepSeq
 import           Data.Coerce
+import           Data.Type.Equality
 import           Debug.Trace
 import           GHC.TypeLits
 
@@ -64,6 +66,7 @@ import           AI.Funn.Flat.Flat
 import           AI.Funn.Flat.LSTM
 import           AI.Funn.Flat.Mixing
 import           AI.Funn.SGD
+import           AI.Funn.SomeNat
 
 sampleIO :: RVar a -> IO a
 sampleIO v = runRVar v StdRandom
@@ -135,12 +138,10 @@ sampleRNN n s0 next = go n s0 (unsafeBlob (1 : replicate 127 0))
     oneofn = V.generate 128 (\i -> unsafeBlob (replicate i 0 ++ [1] ++ replicate (127 - i) 0))
 
 
-data Commands = Train (Maybe FilePath) FilePath (Maybe FilePath) (Maybe FilePath) Int Double
+data Commands = Train (Maybe FilePath) FilePath (Maybe FilePath) (Maybe FilePath) Int Double Integer
               | Sample FilePath (Maybe Int)
               | CheckDeriv
               deriving (Show)
-
-type H = 200
 
 instance (Additive m a, Monad m) => Additive m (Vector a) where
   zero = pure V.empty
@@ -149,9 +150,28 @@ instance (Additive m a, Monad m) => Additive m (Vector a) where
     | V.null ys = pure xs
     | otherwise = V.zipWithM plus xs ys
 
+data ParBox where
+  ParBox :: KnownNat n => Blob n -> ParBox
+
 instance LB.Binary (Blob n) where
   put (Blob xs) = putVector putDouble xs
   get = Blob <$> getVector getDouble
+
+instance LB.Binary ParBox where
+  put (ParBox (b :: Blob n)) = do
+    LB.put (natVal (Proxy @ n))
+    LB.put b
+  get = do
+    n <- LB.get
+    withNat n $ \(Proxy :: Proxy n) -> do
+      (b :: Blob n) <- LB.get
+      return (ParBox b)
+
+openParBox :: forall n. KnownNat n => ParBox -> Maybe (Blob n)
+openParBox (ParBox (b :: Blob m)) =
+  case sameNat (Proxy @ n) (Proxy @ m) of
+    Just Refl -> Just b
+    Nothing -> Nothing
 
 main :: IO ()
 main = do
@@ -166,6 +186,7 @@ main = do
                                 <*> optional (strOption (long "log" <> action "file"))
                                 <*> (option auto (long "chunksize") <|> pure 50)
                                 <*> (option auto (long "lr") <|> pure 0.001)
+                                <*> (option auto (long "modelSize") <|> pure 200)
                                )
                           (progDesc "Train NN."))
                          <>
@@ -180,12 +201,11 @@ main = do
                           (progDesc "Check Derivatives.")))
                    fullDesc)
 
-
   cmd <- customExecParser (prefs showHelpOnError) optparser
 
   let
-    step :: Diff IO (Blob _, ((Blob H, Blob H), Blob 128)) ((Blob H, Blob H), Blob 128)
-    step = runPointed $ \in_all -> do
+    step :: KnownNat modelSize => Proxy modelSize -> Diff IO (Blob _, ((Blob modelSize, Blob modelSize), Blob 128)) ((Blob modelSize, Blob modelSize), Blob 128)
+    step Proxy = runPointed $ \in_all -> do
       (Var pars, ((Var hidden, Var prev), Var char)) <- unpack in_all
       (Var p1, Var pars1) <- splitDiff <-- pars
       Var combined_in <- mergeDiff <-- (prev, char)
@@ -196,101 +216,117 @@ main = do
       Var final_dist <- amixDiff (Proxy @ 5) <-- (p3, lstm_out)
       pack ((hidden', lstm_out), final_dist)
 
-    network :: Diff IO (Blob _, Vector (Blob 128)) (Vector (Blob 128))
-    network = runPointed $ \in_all -> do
+    network :: KnownNat modelSize => Proxy modelSize -> Diff IO (Blob _, Vector (Blob 128)) (Vector (Blob 128))
+    network modelSize = runPointed $ \in_all -> do
       (Var pars, Var inputs) <- unpack in_all
       (Var step_pars, Var init) <- splitDiff <-- pars
       (Var h0, Var c0) <- splitDiff <-- init
-      (Var s, Var o) <- scanlDiff step <-- (step_pars, ((h0, c0), inputs))
+      (Var s, Var o) <- scanlDiff (step modelSize) <-- (step_pars, ((h0, c0), inputs))
       return o
 
-    eval :: Diff IO ((Blob _, Vector (Blob 128)), Vector Int) Double
-    eval = Diff.first network >>> zipDiff >>> mapDiff softmaxCost >>> vsumDiff
+    train :: KnownNat modelSize => Proxy modelSize -> Blob _ -> FilePath -> (Maybe FilePath) -> (Maybe FilePath) -> Int -> Double -> IO ()
+    train modelSize initialParameters input savefile logfile chunkSize learningRate =
+      do
+        let
+          step' = step modelSize
+          network' = network modelSize
 
-    oneofn :: Vector (Blob 128)
-    oneofn = V.generate 128 (\i -> unsafeBlob (replicate i 0 ++ [1] ++ replicate (127 - i) 0))
+          eval :: Diff IO ((Blob _, Vector (Blob 128)), Vector Int) Double
+          eval = Diff.first network' >>> zipDiff >>> mapDiff softmaxCost >>> vsumDiff
 
-    runrnn par s c = do
-      ((c', o), _) <- Diff.runDiff step (par, (s, c))
-      return (c', o)
+          oneofn :: Vector (Blob 128)
+          oneofn = V.generate 128 (\i -> unsafeBlob (replicate i 0 ++ [1] ++ replicate (127 - i) 0))
+
+          runrnn par s c = do
+            ((c', o), _) <- Diff.runDiff step' (par, (s, c))
+            return (c', o)
+
+        text <- B.readFile input
+        running_average <- newIORef 0
+        running_count <- newIORef 0
+        iteration <- newIORef (0 :: Int)
+        startTime <- getTime ProcessCPUTime
+        let
+          α :: Double
+          α = 0.99
+
+          tvec = V.fromList (filter (<128) $ B.unpack text) :: U.Vector Word8
+          ovec = V.map (\c -> oneofn V.! (fromIntegral c)) (V.convert tvec) :: Vector (Blob 128)
+
+          source :: IO (Vector (Blob 128), Vector Int)
+          source = do s <- sampleIO (uniform 0 (V.length tvec - chunkSize))
+                      let
+                        input = (oneofn V.! 0) `V.cons` V.slice s (chunkSize - 1) ovec
+                        output = V.map fromIntegral (V.convert (V.slice s chunkSize tvec))
+                      return (input, output)
+
+          objective p = do
+            (i, o) <- source
+            (err, k) <- Diff.runDiff eval ((p,i),o)
+
+            when (not (isInfinite err || isNaN err)) $ do
+              modifyIORef' running_average (\x -> (α*x + (1 - α)*err))
+              modifyIORef' running_count (\x -> (α*x + (1 - α)*1))
+
+            putStrLn $ "Error: " ++ show err
+            ((dp, _), _) <- k 1
+            return dp
+
+          next p m = do
+            x <- do q <- readIORef running_average
+                    w <- readIORef running_count
+                    return ((q / w) / fromIntegral chunkSize)
+            modifyIORef' iteration (+1)
+            i <- readIORef iteration
+            now <- getTime ProcessCPUTime
+            let tdiff = fromIntegral (toNanoSecs (now - startTime)) / (10^9) :: Double
+            putStrLn $ printf "[% 11.4f | %i]  %f" tdiff i x
+
+            when (i `mod` 50 == 0) $ do
+              let (par, c0) = splitBlob p
+              msg <- sampleRNN 200 (splitBlob c0) (runrnn par)
+              putStrLn msg
+
+            when (i `mod` 100 == 0) $ do
+              case savefile of
+                Just savefile -> do
+                  LB.writeFile (printf "%s-%6.6i-%5.5f.bin" savefile i x) $ LB.encode (natVal modelSize, ParBox p)
+                  LB.writeFile (savefile ++ "-latest.bin") $ LB.encode (natVal modelSize, ParBox p)
+                Nothing -> return ()
+            m
+
+        deepseqM (tvec, ovec)
+
+        adam (adamBlob { adam_α = learningRate }) initialParameters objective next
 
 
   case cmd of
-   Train initpath input savefile logfile chunkSize lr -> do
-     initial_par <- case initpath of
-       Just path -> LB.decode <$> LB.readFile path
-       Nothing -> sampleIO (generateBlob $ uniform (-0.5) (0.5))
+    Train Nothing input savefile logfile chunkSize lr modelSize -> do
+      withNat modelSize $ \(proxy :: Proxy modelSize) -> do
+        initial_par <- sampleIO (generateBlob $ uniform (-0.5) (0.5))
+        deepseqM initial_par
+        train proxy initial_par input savefile logfile chunkSize lr
 
-     deepseqM initial_par
+    Train (Just resumepath) input savefile logfile chunkSize lr _ -> do
+      (modelSize, box) <- LB.decode <$> LB.readFile resumepath
+      withNat modelSize $ \(proxy :: Proxy modelSize) ->
+        case openParBox box of
+          Just initial_par -> do
+            deepseqM initial_par
+            train proxy initial_par input savefile logfile chunkSize lr
+          Nothing -> error "model mismatch"
 
-     text <- B.readFile input
-
-     running_average <- newIORef 0
-     running_count <- newIORef 0
-     iteration <- newIORef (0 :: Int)
-
-     startTime <- getTime ProcessCPUTime
-
-     let
-       α :: Double
-       α = 0.99
-
-       tvec = V.fromList (filter (<128) $ B.unpack text) :: U.Vector Word8
-       ovec = V.map (\c -> oneofn V.! (fromIntegral c)) (V.convert tvec) :: Vector (Blob 128)
-
-       source :: IO (Vector (Blob 128), Vector Int)
-       source = do s <- sampleIO (uniform 0 (V.length tvec - chunkSize))
-                   let
-                     input = (oneofn V.! 0) `V.cons` V.slice s (chunkSize - 1) ovec
-                     output = V.map fromIntegral (V.convert (V.slice s chunkSize tvec))
-                   return (input, output)
-
-       objective p = do
-         (i, o) <- source
-         (err, k) <- Diff.runDiff eval ((p,i),o)
-
-         when (not (isInfinite err || isNaN err)) $ do
-           modifyIORef' running_average (\x -> (α*x + (1 - α)*err))
-           modifyIORef' running_count (\x -> (α*x + (1 - α)*1))
-
-         putStrLn $ "Error: " ++ show err
-         ((dp, _), _) <- k 1
-         return dp
-
-       next p m = do
-         x <- do q <- readIORef running_average
-                 w <- readIORef running_count
-                 return ((q / w) / fromIntegral chunkSize)
-         modifyIORef' iteration (+1)
-         i <- readIORef iteration
-         now <- getTime ProcessCPUTime
-         let tdiff = fromIntegral (toNanoSecs (now - startTime)) / (10^9) :: Double
-         putStrLn $ printf "[% 11.4f | %i]  %f" tdiff i x
-
-         when (i `mod` 50 == 0) $ do
-           let (par, c0) = splitBlob p
-           msg <- sampleRNN 200 (splitBlob c0) (runrnn par)
-           putStrLn msg
-
-         when (i `mod` 1000 == 0) $ do
-           case savefile of
-            Just savefile -> do
-              LB.writeFile (printf "%s-%6.6i-%5.5f.bin" savefile i x) $ LB.encode p
-              LB.writeFile (savefile ++ "-latest.bin") $ LB.encode p
-            Nothing -> return ()
-
-         m
-
-     deepseqM (tvec, ovec)
-
-     adam (adamBlob { adam_α = lr }) initial_par objective next
-
-   Sample initpath length -> do
-     initial <- LB.decode <$> LB.readFile initpath
-     let n = case length of
-           Just n -> n
-           Nothing -> 500
-
-     let (par, c0) = splitBlob initial
-     msg <- sampleRNN n (splitBlob c0) (runrnn par)
-     putStrLn msg
+    Sample initpath length -> do
+      (modelSize, box) <- LB.decode <$> LB.readFile initpath
+      let n = fromMaybe 500 length
+      withNat modelSize $ \(proxy :: Proxy modelSize) ->
+        case openParBox box of
+          Just initial -> do
+            deepseqM initial
+            let (par, c0) = splitBlob initial
+                runrnn s c = do
+                  ((c', o), _) <- Diff.runDiff (step proxy) (par, (s, c))
+                  return (c', o)
+            msg <- sampleRNN n (splitBlob c0) runrnn
+            putStrLn msg
+          Nothing -> error "model mismatch"
