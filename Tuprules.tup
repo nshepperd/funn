@@ -1,4 +1,5 @@
 HSROOT=$(TUP_CWD)
+GHC_CFLAGS=-fplugin GHC.TypeLits.KnownNat.Solver -fconstraint-solver-iterations=6
 GHC_FLAGS=-O2
 include script/rules
 .gitignore

@@ -3,7 +3,8 @@
 {-# LANGUAGE BangPatterns, ForeignFunctionInterface #-}
 {-# LANGUAGE TypeApplications, PartialTypeSignatures #-}
 {-# LANGUAGE FlexibleInstances, MultiParamTypeClasses #-}
-
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
+module Main where
 import           Control.Applicative
 import           Control.Monad
 import           Control.Category

@@ -168,10 +168,7 @@ type Cover a b = 2^(LogCeil (Max a b))
 
 bmixDiff :: forall s a b m. (Monad m, KnownNat s, KnownNat a, KnownNat b) =>
             Proxy s -> Diff m (Blob (s * 2^(LogCeil (Max a b)) * LogCeil (Max a b)), Blob a) (Blob b)
-bmixDiff proxy = witnessMax pa pb $
-                 \pmax -> witnessLogCeil pmax $
-                          \pd -> witness2 pd $
-                                 \_ -> second resizeDiff >>> sub' >>> resizeDiff
+bmixDiff proxy = second resizeDiff >>> sub' >>> resizeDiff
   where
     sub :: KnownNat d => Proxy d -> Diff m (Blob (s * (2^d) * d), Blob (2^d)) (Blob (2^d))
     sub _ = mixDiff proxy

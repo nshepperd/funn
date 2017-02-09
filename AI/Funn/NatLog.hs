@@ -7,12 +7,19 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE FlexibleContexts #-}
-module AI.Funn.NatLog (LogFloor, LogCeil, Max, witnessMax, witnessLogCeil, witness2) where
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+module AI.Funn.NatLog (LogFloor, LogCeil, Max) where
 
 import Data.Constraint
 import Data.Ord
 import Data.Proxy
+import Data.Singletons.TH    (genDefunSymbols)
 import GHC.TypeLits
+import GHC.TypeLits.KnownNat
+import Test.QuickCheck
 
 import AI.Funn.SomeNat
 
@@ -25,37 +32,20 @@ type family RunOrdering (o :: Ordering) (a :: k) (b :: k) (c :: k) :: k where
 --   IF True a _ = a
 --   IF False _ b = b
 
-witnessMax :: forall proxy a b r. (KnownNat a, KnownNat b) =>
-              proxy a -> proxy b -> (KnownNat (Max a b) => Proxy (Max a b) -> r) -> r
-witnessMax pa pb r = withNatUnsafe (max a b) r
-  where
-    a = natVal pa
-    b = natVal pb
-
-witness2 :: forall proxy n r. (KnownNat n) =>
-              proxy n -> (KnownNat (2^n) => Proxy (2^n) -> r) -> r
-witness2 p r = withNatUnsafe (2^n) r
-  where
-    n = natVal p
-
-witnessLogCeil :: forall proxy n r. (KnownNat n) =>
-              proxy n -> (KnownNat (LogCeil n) => Proxy (LogCeil n) -> r) -> r
-witnessLogCeil p r = withNatUnsafe d r
-  where
-    n = natVal p
-    d = logCeil 32 n
-
-    logCeil 0 n = 0
-    logCeil s n = case compare (2^s) n of
-                   LT -> s + 1
-                   EQ -> s
-                   GT -> logCeil (s - 1) n
-
 type family Max (a :: Nat) (b :: Nat) :: Nat where
   Max 0 b = b
   Max a 0 = a
   Max a b = RunOrdering (CmpNat a b)
             b a a
+
+(genDefunSymbols [''Max])
+
+instance (KnownNat a, KnownNat b) => KnownNat2 $(nameToSymbol ''Max) a b where
+  type KnownNatF2 $(nameToSymbol ''Max) = MaxSym0
+  natSing2 = let x = natVal (Proxy :: Proxy a)
+                 y = natVal (Proxy :: Proxy b)
+                 z = max x y
+             in SNatKn z
 
 type family LogFloor (n :: Nat) :: Nat where
   LogFloor 0 = 0
@@ -94,10 +84,6 @@ type LogFloor30 n = RunOrdering (CmpNat (2^30) n) 30 30 (LogFloor29 n)
 type LogFloor31 n = RunOrdering (CmpNat (2^31) n) 31 31 (LogFloor30 n)
 type LogFloor32 n = RunOrdering (CmpNat (2^32) n) 32 32 (LogFloor31 n)
 
-type family LogCeil (n :: Nat) :: Nat where
-  LogCeil 0 = 0
-  LogCeil n = LogCeil32 n
-
 type LogCeil1 n = RunOrdering (CmpNat (2^1) n) 2 1 0
 type LogCeil2 n = RunOrdering (CmpNat (2^2) n) 3 2 (LogCeil1 n)
 type LogCeil3 n = RunOrdering (CmpNat (2^3) n) 4 3 (LogCeil2 n)
@@ -130,6 +116,29 @@ type LogCeil29 n = RunOrdering (CmpNat (2^29) n) 30 29 (LogCeil28 n)
 type LogCeil30 n = RunOrdering (CmpNat (2^30) n) 31 30 (LogCeil29 n)
 type LogCeil31 n = RunOrdering (CmpNat (2^31) n) 32 31 (LogCeil30 n)
 type LogCeil32 n = RunOrdering (CmpNat (2^32) n) 33 32 (LogCeil31 n)
+
+type family LogCeil_ (a :: Nat) (b :: Nat) :: Nat where
+  LogCeil_ 0 0 = 0
+  LogCeil_ 0 n = LogCeil32 n
+(genDefunSymbols [''LogCeil_])
+
+type LogCeil n = LogCeil_ 0 n
+
+logCeil :: Integer -> Integer -> Integer
+logCeil 0 n = 0
+logCeil s n = case compare (2^s) n of
+                   LT -> s + 1
+                   EQ -> s
+                   GT -> logCeil (s - 1) n
+
+instance forall a b. (KnownNat b) => KnownNat2 $(nameToSymbol ''LogCeil_) a b where
+  type KnownNatF2 $(nameToSymbol ''LogCeil_) = LogCeil_Sym0
+  natSing2 = let x = natVal (Proxy :: Proxy b)
+             in SNatKn (logCeil 32 x)
+
+logCeilT :: Integer -> Integer
+logCeilT n = withNat n $ \(Proxy :: Proxy n) ->
+                           natVal (Proxy :: Proxy (LogCeil n))
 
 -- p :: Int -> String
 -- p s = "type LogFloor" ++ show s ++ " n = " ++
