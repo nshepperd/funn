@@ -1,16 +1,14 @@
 {-# LANGUAGE TypeFamilies, KindSignatures, FlexibleContexts #-}
 {-# LANGUAGE BangPatterns, MultiParamTypeClasses, FlexibleInstances #-}
+{-# LANGUAGE TypeOperators, GADTs, ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications, DataKinds #-}
 module AI.Funn.Network.Network (
-  Parameters(..),
-  Derivable(..),
-  Additive(..),
-  Diff(..),
   Network(..),
-  runNetwork, runNetwork', runNetwork_,
-  liftDiff,
-  left, right, (>>>),
-  (***), idWith,
-  assocL, assocR, swap
+  -- runNetwork, runNetwork', runNetwork_,
+  -- liftDiff,
+  -- left, right, (>>>),
+  -- (***), idWith,
+  -- assocL, assocR, swap
   ) where
 
 import           Prelude hiding ((.), id)
@@ -20,6 +18,7 @@ import           Control.Monad
 import           Control.Category
 import           Data.Foldable
 import           Data.Monoid
+import           Data.Proxy
 
 import           Control.DeepSeq
 import qualified Data.Binary as B
@@ -27,67 +26,39 @@ import           Data.Functor.Identity
 import           Data.Random
 import qualified Data.Vector.Generic as V
 import qualified Data.Vector.Storable as S
+import           GHC.TypeLits
 
 import           AI.Funn.Common
 import           AI.Funn.Diff.Diff (Additive(..), Derivable(..), Diff(..))
 import qualified AI.Funn.Diff.Diff as Diff
+import           AI.Funn.Flat.Flat
+import           AI.Funn.SomeNat
 
-newtype Parameters = Parameters { getParameters :: S.Vector Double } deriving (Show, Read)
+data Network m a b where
+  Network :: KnownNat p => Proxy p -> Diff m (Blob p, a) b -> RVar (Blob p) -> Network m a b
 
-instance NFData Parameters where
-  rnf (Parameters v) = rnf v
+params :: Network m a b -> Int
+params (Network p _ _) = fromIntegral (natVal p)
 
-instance B.Binary Parameters where
-  put (Parameters v) = putVector putDouble v
-  get = Parameters <$> getVector getDouble
+concatInit :: (KnownNat a, KnownNat b)
+           => RVar (Blob a) -> RVar (Blob b)
+           -> RVar (Blob (a + b))
+concatInit = liftA2 concatBlob
 
-instance Monoid Parameters where
-  {-# INLINE mempty #-}
-  mempty = Parameters mempty
-  {-# INLINE mappend #-}
-  mappend (Parameters x) (Parameters y) = Parameters (x `mappend` y)
-
-instance CheckNAN Parameters where
-  check s (Parameters xs) b = if V.any (\x -> isNaN x || isInfinite x) xs then
-                                error ("[" ++ s ++ "] checkNaN -- " ++ show b)
-                              else ()
-
-instance Derivable Parameters where
-  type D Parameters = [Parameters]
-
-data Network m a b = Network {
-  evaluate :: Diff m (a, Parameters) (b, Double),
-  params :: Int,
-  initialise :: RVar Parameters
-  }
-
-runNetwork_ :: Network Identity a b -> Parameters -> a -> b
-runNetwork_ network params a = let Identity ((b, _), _) = runDiff (evaluate network) (a, params) in b
-
-
-runNetwork :: Network Identity a b -> Parameters -> a -> (b, Double)
-runNetwork network params a = let Identity ((b, cost), _) = runDiff (evaluate network) (a, params)
-                              in (b, cost)
-
-runNetwork' :: Network Identity a () -> Parameters -> a -> (Double, D a, Parameters)
-runNetwork' network params a = let (((), c), k) = runIdentity $ runDiff (evaluate network) (a, params)
-                                   (da, dparams) = runIdentity $ k ((), 1)
-                               in (c, da, fold dparams)
-
-left :: (Monad m) => Network m a b -> Network m (a,c) (b,c)
-left net = Network ev (params net) (initialise net)
+first :: (Monad m) => Network m a b -> Network m (a,c) (b,c)
+first (Network p diff init) = Network p run init
   where
-    ev = Diff.first Diff.swap >>> Diff.assocR >>> Diff.second (evaluate net) >>> Diff.assocL >>> Diff.first Diff.swap
+    run = Diff.assocL >>> Diff.first diff
 
-right :: (Monad m) => Network m a b -> Network m (c,a) (c,b)
-right net = Network ev (params net) (initialise net)
+second :: (Monad m) => Network m a b -> Network m (c,a) (c,b)
+second (Network p diff init) = Network p run init
   where
-    ev = Diff.assocR >>> Diff.second (evaluate net) >>> Diff.assocL
+    run = Diff.second Diff.swap >>> Diff.assocL >>> Diff.first diff >>> Diff.swap
 
 liftDiff :: (Monad m) => Diff m a b -> Network m a b
-liftDiff diff = Network ev 0 (pure mempty)
+liftDiff diff = Network (Proxy @ 0) run (generateBlob (pure 0))
   where
-    ev = Diff.first diff >>> Diff.second (Diff (\_ -> return (0, \_ -> return [])))
+    run = Diff (\(e, a) -> pure (a, \da -> pure (e, da))) >>> diff
 
 assocL :: (Monad m) => Network m (a,(b,c)) ((a,b),c)
 assocL = liftDiff Diff.assocL
@@ -99,23 +70,30 @@ swap :: (Monad m) => Network m (a,b) (b,a)
 swap = liftDiff Diff.swap
 
 connect :: (Monad m) => Network m a b -> Network m b c -> Network m a c
-connect one two = Network (Diff ev) (params one + params two) (liftA2 (<>) (initialise one) (initialise two))
-  where ev (a, Parameters par) = do ((b, cost1), k1) <- runDiff (evaluate one) (a, Parameters $ V.take (params one) par)
-                                    ((c, cost2), k2) <- runDiff (evaluate two) (b, Parameters $ V.drop (params one) par)
-                                    let backward (dc, dcost) = do (db, dpar2) <- k2 (dc, dcost)
-                                                                  (da, dpar1) <- k1 (db, dcost)
-                                                                  return (da, dpar1 <> dpar2)
-                                    return ((c, cost1 + cost2), backward)
+connect (Network (p1 :: Proxy p1) diff1 init1) (Network (p2 :: Proxy p2) diff2 init2) =
+  Network p diff init
+  where
+    p = Proxy @ (p1 + p2)
+    init = concatInit init1 init2
+    diff = Diff $ \(params, a) -> do
+      let (par1, par2) = splitBlob params
+      (b, k1) <- runDiff diff1 (par1, a)
+      (c, k2) <- runDiff diff2 (par2, b)
+      let backward dc = do
+            (dpar2, db) <- k2 dc
+            (dpar1, da) <- k1 db
+            return (concatBlob dpar1 dpar2, da)
+      return (c, backward)
 
 net_empty :: (Monad m) => Network m a a
 net_empty = liftDiff id
 
-idWith :: (Monad m) => proxy a -> Network m a a
-idWith _ = net_empty
+-- idWith :: (Monad m) => proxy a -> Network m a a
+-- idWith _ = net_empty
 
 instance Monad m => Category (Network m) where
   id = net_empty
   (.) = flip connect
 
 infixr 3 ***
-one *** two = left one >>> right two
+one *** two = first one >>> second two
