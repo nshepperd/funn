@@ -4,7 +4,6 @@
 {-# LANGUAGE TypeApplications, PartialTypeSignatures #-}
 {-# LANGUAGE FlexibleInstances, MultiParamTypeClasses #-}
 {-# LANGUAGE GADTs #-}
-{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 module Main where
 import           Control.Applicative
 import           Control.Monad
@@ -45,6 +44,7 @@ import           Foreign.Ptr
 import           System.IO.Unsafe
 
 import qualified Control.Monad.State.Lazy as SL
+import           Control.Monad.IO.Class
 import           Data.Functor.Identity
 import           Data.Random
 import           Data.Random.Distribution.Categorical
@@ -68,8 +68,8 @@ import           AI.Funn.Flat.Mixing
 import           AI.Funn.SGD
 import           AI.Funn.SomeNat
 
-sampleIO :: RVar a -> IO a
-sampleIO v = runRVar v StdRandom
+sampleIO :: MonadIO m => RVar a -> m a
+sampleIO v = liftIO (runRVar v StdRandom)
 
 deepseqM :: (Monad m, NFData a) => a -> m ()
 deepseqM x = deepseq x (return ())
@@ -80,7 +80,7 @@ stdev :: [Double] -> Double
 stdev xs = let m = average xs in
             sum [(x-m)^2 | x <- xs] / (genericLength xs - 1)
 
-checkGradient' :: forall a. (KnownNat a) => Diff IO (Blob a) Double -> IO (Double, Double, Double)
+checkGradient' :: (KnownNat a) => Diff IO (Blob a) Double -> IO (Double, Double, Double)
 checkGradient' network = do gs <- replicateM 1000 (checkGradient network)
                             let
                               ls = map log gs
@@ -88,7 +88,7 @@ checkGradient' network = do gs <- replicateM 1000 (checkGradient network)
                               d = stdev ls
                             return (exp (x - d), exp x, exp (x + d))
 
-checkGradient :: forall a. (KnownNat a) => Diff IO (Blob a) Double -> IO Double
+checkGradient :: (KnownNat a) => Diff IO (Blob a) Double -> IO Double
 checkGradient network = do input <- sampleIO (generateBlob $ uniform 0 1)
                            (e, k) <- runDiff network input
                            d_input <- k 1
@@ -101,7 +101,6 @@ checkGradient network = do input <- sampleIO (generateBlob $ uniform 0 1)
                            return $ abs (δ_gradient - δ_finite) / (abs δ_gradient + abs δ_finite)
 
   where
-    a = fromIntegral (natVal (Proxy :: Proxy a)) :: Int
     ε = 0.00001
 
 adamBlob :: forall m n. (Monad m, KnownNat n) => AdamConfig m (Blob n) (Blob n)
@@ -118,25 +117,26 @@ adamBlob = Adam {
   adam_divide_d = \(Blob x) (Blob y) -> pure $ Blob (V.zipWith (/) x y),
   adam_update_p = plus
   }
-  where
-    n = fromIntegral (natVal (Proxy :: Proxy n))
+
+unfoldM :: Monad m => Int -> m a -> m [a]
+unfoldM 0 m = return []
+unfoldM n m = (:) <$> m <*> unfoldM (n-1) m
+
+onehot :: Vector (Blob 128)
+onehot = V.generate 128 (\i -> unsafeBlob (replicate i 0 ++ [1] ++ replicate (127 - i) 0))
 
 sampleRNN :: Int -> s -> (s -> Blob 128 -> IO (s, Blob 128)) -> IO [Char]
-sampleRNN n s0 next = go n s0 (unsafeBlob (1 : replicate 127 0))
+sampleRNN n s0 next = SL.evalStateT (unfoldM n step) (s0, 0)
   where
-    go 0 _ _ = return []
-    go n s q = do
-      (new_s, new_q) <- next s q
+    step = do
+      (s, c) <- SL.get
+      (new_s, new_q) <- liftIO $ next s (onehot V.! c)
       let exps = V.map exp (getBlob new_q)
           factor = 1 / V.sum exps
           ps = V.map (*factor) exps
-      c <- sampleIO (categorical $ zip (V.toList ps) [0 :: Int ..])
-      rest <- go (n-1) new_s (oneofn V.! fromIntegral c)
-      return (chr c : rest)
-
-    oneofn :: Vector (Blob 128)
-    oneofn = V.generate 128 (\i -> unsafeBlob (replicate i 0 ++ [1] ++ replicate (127 - i) 0))
-
+      new_c <- sampleIO (categorical $ zip (V.toList ps) [0 :: Int ..])
+      SL.put (new_s, new_c)
+      return (chr new_c)
 
 data Commands = Train (Maybe FilePath) FilePath (Maybe FilePath) (Maybe FilePath) Int Double Integer
               | Sample FilePath (Maybe Int)
@@ -173,6 +173,34 @@ openParBox (ParBox (b :: Blob m)) =
     Just Refl -> Just b
     Nothing -> Nothing
 
+step :: (Monad m, KnownNat modelSize) => Proxy modelSize -> Diff m (Blob _, ((Blob modelSize, Blob modelSize), Blob 128)) ((Blob modelSize, Blob modelSize), Blob 128)
+step Proxy = runPointed $ \in_all -> do
+  (Var pars, ((Var hidden, Var prev), Var char)) <- unpack in_all
+  (Var p1, Var pars1) <- splitDiff <-- pars
+  Var combined_in <- mergeDiff <-- (prev, char)
+  Var lstm_in <- (tanhDiff <<< amixDiff (Proxy @ 5)) <-- (p1, combined_in)
+  (Var p2, Var p3) <- splitDiff <-- pars1
+  (Var hidden', Var lstm_out) <- lstmDiff <-- (p2, (hidden, lstm_in))
+  -- (Var p3, Var pars3) <- splitDiff <-- pars2
+  Var final_dist <- amixDiff (Proxy @ 5) <-- (p3, lstm_out)
+  pack ((hidden', lstm_out), final_dist)
+
+network :: (Monad m, KnownNat modelSize) => Proxy modelSize -> Diff m (Blob _, Vector (Blob 128)) (Vector (Blob 128))
+network modelSize = runPointed $ \in_all -> do
+  (Var pars, Var inputs) <- unpack in_all
+  (Var step_pars, Var init) <- splitDiff <-- pars
+  (Var h0, Var c0) <- splitDiff <-- init
+  (Var s, Var o) <- scanlDiff step' <-- (step_pars, ((h0, c0), inputs))
+  return o
+    where
+      step' = step modelSize
+
+evalNetwork :: (Monad m, KnownNat modelSize) => Proxy modelSize -> Diff m (Blob _, (Vector (Blob 128), Vector Int)) Double
+evalNetwork size = Diff.assocL >>> Diff.first network' >>> zipDiff >>> mapDiff softmaxCost >>> vsumDiff
+  where
+    network' = network size
+
+
 main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
@@ -204,38 +232,12 @@ main = do
   cmd <- customExecParser (prefs showHelpOnError) optparser
 
   let
-    step :: KnownNat modelSize => Proxy modelSize -> Diff IO (Blob _, ((Blob modelSize, Blob modelSize), Blob 128)) ((Blob modelSize, Blob modelSize), Blob 128)
-    step Proxy = runPointed $ \in_all -> do
-      (Var pars, ((Var hidden, Var prev), Var char)) <- unpack in_all
-      (Var p1, Var pars1) <- splitDiff <-- pars
-      Var combined_in <- mergeDiff <-- (prev, char)
-      Var lstm_in <- (tanhDiff <<< amixDiff (Proxy @ 5)) <-- (p1, combined_in)
-      (Var p2, Var p3) <- splitDiff <-- pars1
-      (Var hidden', Var lstm_out) <- lstmDiff <-- (p2, (hidden, lstm_in))
-      -- (Var p3, Var pars3) <- splitDiff <-- pars2
-      Var final_dist <- amixDiff (Proxy @ 5) <-- (p3, lstm_out)
-      pack ((hidden', lstm_out), final_dist)
-
-    network :: KnownNat modelSize => Proxy modelSize -> Diff IO (Blob _, Vector (Blob 128)) (Vector (Blob 128))
-    network modelSize = runPointed $ \in_all -> do
-      (Var pars, Var inputs) <- unpack in_all
-      (Var step_pars, Var init) <- splitDiff <-- pars
-      (Var h0, Var c0) <- splitDiff <-- init
-      (Var s, Var o) <- scanlDiff (step modelSize) <-- (step_pars, ((h0, c0), inputs))
-      return o
-
     train :: KnownNat modelSize => Proxy modelSize -> Blob _ -> FilePath -> (Maybe FilePath) -> (Maybe FilePath) -> Int -> Double -> IO ()
     train modelSize initialParameters input savefile logfile chunkSize learningRate =
       do
         let
           step' = step modelSize
-          network' = network modelSize
-
-          eval :: Diff IO ((Blob _, Vector (Blob 128)), Vector Int) Double
-          eval = Diff.first network' >>> zipDiff >>> mapDiff softmaxCost >>> vsumDiff
-
-          oneofn :: Vector (Blob 128)
-          oneofn = V.generate 128 (\i -> unsafeBlob (replicate i 0 ++ [1] ++ replicate (127 - i) 0))
+          evalNetwork' = evalNetwork modelSize
 
           runrnn par s c = do
             ((c', o), _) <- Diff.runDiff step' (par, (s, c))
@@ -251,25 +253,25 @@ main = do
           α = 0.99
 
           tvec = V.fromList (filter (<128) $ B.unpack text) :: U.Vector Word8
-          ovec = V.map (\c -> oneofn V.! (fromIntegral c)) (V.convert tvec) :: Vector (Blob 128)
+          ovec = V.map (\c -> onehot V.! (fromIntegral c)) (V.convert tvec) :: Vector (Blob 128)
 
           source :: IO (Vector (Blob 128), Vector Int)
           source = do s <- sampleIO (uniform 0 (V.length tvec - chunkSize))
                       let
-                        input = (oneofn V.! 0) `V.cons` V.slice s (chunkSize - 1) ovec
+                        input = (onehot V.! 0) `V.cons` V.slice s (chunkSize - 1) ovec
                         output = V.map fromIntegral (V.convert (V.slice s chunkSize tvec))
                       return (input, output)
 
           objective p = do
-            (i, o) <- source
-            (err, k) <- Diff.runDiff eval ((p,i),o)
+            sample <- source
+            (err, k) <- Diff.runDiff evalNetwork' (p,sample)
 
             when (not (isInfinite err || isNaN err)) $ do
               modifyIORef' running_average (\x -> (α*x + (1 - α)*err))
               modifyIORef' running_count (\x -> (α*x + (1 - α)*1))
 
             putStrLn $ "Error: " ++ show err
-            ((dp, _), _) <- k 1
+            (dp, _) <- k 1
             return dp
 
           next p m = do
