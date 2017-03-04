@@ -1,48 +1,15 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE PartialTypeSignatures #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE ScopedTypeVariables, ForeignFunctionInterface #-}
 module AI.Funn.CL.Mem (
   Mem, malloc, free, arg,
   fromList, toList
   ) where
 
-import           Control.Applicative
-import           Control.Monad
-import           Data.Foldable hiding (toList)
-import           Data.List
-import           Data.Monoid
-import           Data.Traversable
-
-import           Control.Concurrent.MVar
-import           Data.Proxy
-import           Data.Random
-import           Data.Int
-
-import           GHC.TypeLits
-
 import           Control.Exception
-import           Control.Lens
 import           Control.Monad.IO.Class
-import           Control.Monad.Reader
-import           Control.Monad.State.Lazy
-import           Control.Monad.Trans
-import           Control.Monad.Trans.Control
-
-import           Data.Map (Map)
-import qualified Data.Map.Strict as Map
-
-import           Data.IORef
+import           Data.Int
 import           Foreign.ForeignPtr
 import           Foreign.Ptr
 import           Foreign.Storable (Storable(..))
-import           GHC.Float
-import           System.IO.Unsafe
 import           System.Mem
 import           Unsafe.Coerce
 
