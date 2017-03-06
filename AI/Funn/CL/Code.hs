@@ -19,160 +19,65 @@ import Data.Traversable
 import Data.Ratio
 import Foreign.Ptr
 
-  -- AST
+import qualified AI.Funn.CL.AST as AST
 
-newtype Var a = Var { varName :: String } deriving (Show, Eq)
-
-data Op a = Op String deriving (Show, Eq)
-
-data Expr a where
-  ExpLit :: String -> Expr a
-  ExpIndex :: Expr (Ptr a) -> Expr Int -> Expr a
-  ExpCall :: Var (a -> b) -> Expr a -> Expr b
-  ExpBinOp :: Op (a -> b -> c) -> Expr a -> Expr b -> Expr c
-  ExpVar :: Var a -> Expr a
-
-data Statement where
-  StmtReturn :: Statement
-  StmtAssign :: Expr a -> Expr a -> Statement
-  StmtNewVar :: Variable a => Var a -> Statement
-  StmtFor :: Var Int -> Expr Int -> Expr Int -> Block -> Statement
-
-data Block where
-  Block :: [Statement] -> Block
-
-instance Monoid Block where
-  mempty = Block []
-  mappend (Block xs) (Block ys) = Block (xs <> ys)
-
-data Kernel where
-  Kernel :: String -> [String] -> Block -> Kernel
-
-deriving instance Show (Expr a)
-deriving instance Show Statement
-deriving instance Show Block
-deriving instance Show Kernel
-
-  -- Printing as OpenCL code.
-
-printKernel :: Kernel -> String
-printKernel (Kernel name args body) = "__kernel void " ++ name ++ "(" ++ showArgs args ++ ") {\n"
-                                      ++ indent 2 (printBlock body)
-                                      ++ "}\n"
-  where
-    showArgs args = intercalate ", " args
-
-indent :: Int -> String -> String
-indent n str = unlines (fmap (replicate n ' ' ++) (lines str))
-
-printBlock :: Block -> String
-printBlock (Block ss) = unlines $ fmap printStatement ss
-
-printStatement :: Statement -> String
-printStatement StmtReturn = "return;"
-printStatement (StmtAssign expl expr) = printExpr expl ++ " = " ++ printExpr expr ++ ";"
-printStatement (StmtNewVar var) = declare var ++ ";"
-printStatement (StmtFor var from to each) =
-  "for (" ++ ("int " ++ varName var ++ " = " ++ printExpr from ++ "; " ++
-               varName var ++ " < " ++ printExpr to ++ "; " ++
-               varName var ++ "++") ++ ") {\n" ++
-  indent 2 (printBlock each)
-  ++ "}"
-
-printExpr :: Expr a -> String
-printExpr (ExpVar (Var name)) = name
-printExpr (ExpLit lit) = lit
-printExpr (ExpIndex arr i) = printExpr arr ++ "[" ++ printExpr i ++ "]"
-printExpr (ExpCall (Var fun) expr) = fun ++ "(" ++ printExpr expr ++ ")"
-printExpr (ExpBinOp (Op op) x y) = paren (printExpr x ++ op ++ printExpr y)
-  where
-    paren xs = "(" ++ xs ++ ")"
-
-  -- Definable variables
+newtype Var a = Var { varName :: AST.Name }
+newtype Expr a = Expr AST.Expr
 
 class Variable a where
-  declare :: Var a -> String
+  declare :: Var a -> AST.Decl
 
 instance Variable Int where
-  declare (Var name) = "int " ++ name
+  declare (Var name) = AST.Decl "int" name
 
 instance Variable Float where
-  declare (Var name) = "float " ++ name
+  declare (Var name) = AST.Decl "float" name
 
   -- OpenCL Functions
   -- Argument types
 
+exprVar :: Var a -> Expr a
+exprVar (Var name) = Expr (AST.ExprVar name)
+
 class Argument a where
-  declareArgument :: String -> (a, [String])
+  declareArgument :: AST.Name -> (a, [AST.Decl])
 
-instance Argument (Var Int) where
-  declareArgument argName = (Var argName, ["int " ++ argName])
-instance Argument (Expr Int) where
-  declareArgument argName = (ExpVar (Var argName), ["const int " ++ argName])
+instance Variable a => Argument (Expr a) where
+  declareArgument argName = (exprVar var, [declare var])
+    where
+      var = Var (argName)
 
-instance Argument (Expr Float) where
-  declareArgument argName = (ExpVar (Var argName), ["const float " ++ argName])
+-- instance Argument (Expr Int) where
+--   declareArgument argName = (exprName argName, [AST.Decl "int" argName])
+
+-- instance Argument (Expr Float) where
+--   declareArgument argName = (exprName argName, [AST.Decl "float" argName])
 
   -- Function -> Kernel
 
 class ToKernel a where
-  toKernel :: Int -> a -> Kernel
+  toKernel :: Int -> a -> AST.Kernel
 
 instance ToKernel (CL ()) where
-  toKernel n cl = Kernel "run" [] (runCL cl)
+  toKernel n cl = AST.Kernel "run" [] (runCL cl)
 
 instance (Argument a, ToKernel r) => ToKernel (a -> r) where
-  toKernel n f = let (var, args) = declareArgument ("arg" ++ show n)
-                     Kernel name args' body = toKernel (n+1) (f var)
-                 in Kernel name (args ++ args') body
+  toKernel n f = let (a, args) = declareArgument ("arg" ++ show n)
+                     AST.Kernel name args' body = toKernel (n+1) (f a)
+                 in AST.Kernel name (args ++ args') body
 
 kernel :: ToKernel a => a -> String
-kernel a = printKernel (toKernel 0 a)
+kernel a = AST.printKernel (toKernel 0 a)
 
   -- Operational Monad
 
 type CL = Free CLF
 data CLF (r :: *) where
-  NewVar :: Variable a => (Var a -> r) -> CLF r
+  NewVar :: Variable a => (Expr a -> r) -> CLF r
+  NewVarAssign :: Variable a => Expr a -> (Expr a -> r) -> CLF r
   Assign :: Expr a -> Expr a -> r -> CLF r
-  Return :: CLF r
-  ForLoop :: Expr Int -> Expr Int -> (Var Int -> CL ()) -> r -> CLF r
+  ForLoop :: Expr Int -> Expr Int -> (Expr Int -> CL ()) -> r -> CLF r
 deriving instance Functor CLF
-
-newvar :: Variable a => CL (Var a)
-newvar = liftF (NewVar id)
-
-infixl 1 .=
-(.=) :: Var a  -> Expr a -> CL ()
-l .= r = liftF (Assign (ExpVar l) r ())
-
-ret :: CL ()
-ret = liftF Return
-
-  -- Embedding literals
-
-class Literal a where
-  literal :: a -> Expr a
-
-instance Literal Int where
-  literal n = ExpLit (show n)
-
-instance Literal Float where
-  literal n = ExpLit (show n)
-
-instance (Literal a, Num a) => Num (Expr a) where
-  fromInteger n = literal (fromInteger n)
-  abs = undefined
-  signum = undefined
-  negate n = 0 - n
-  (+) a b = ExpBinOp (Op "+") a b
-  (-) a b = ExpBinOp (Op "-") a b
-  (*) a b = ExpBinOp (Op "*") a b
-
-instance (Literal a, Fractional a) => Fractional (Expr a) where
-  a / b = ExpBinOp (Op "/") a b
-  recip a = 1 / a
-  fromRational x = fromInteger (numerator x) / fromInteger (denominator x)
 
   -- Gensym monad for supply of fresh variable names
 
@@ -194,82 +99,116 @@ runGenSym m = go 0 m
 
   -- Compile to AST
 
-runCL :: CL () -> Block
-runCL cl = runGenSym (go cl)
+runCL :: CL () -> AST.Block
+runCL cl = AST.Block (runGenSym (go cl))
   where
-    go :: CL () -> GenSym Block
-    go (Pure ()) = return (Block [])
+    go (Pure ()) = return []
     go (Free clf) = case clf of
       NewVar k -> do
         var <- genvar
-        rest <- go (k var)
-        return $ Block [StmtNewVar var] <> rest
-      Assign l r k -> do
-        rest <- go k
-        return $ Block [StmtAssign l r] <> rest
-      Return -> return (Block [StmtReturn])
-      ForLoop from to sub r -> do
+        rest <- go (k (exprVar var))
+        return $ [AST.StmtDeclare (declare var)] <> rest
+      NewVarAssign (Expr e) k -> do
         var <- genvar
-        loop <- go (sub var)
+        rest <- go (k (exprVar var))
+        return $ [AST.StmtDeclareAssign (declare var) e] <> rest
+      Assign (Expr v) (Expr e) k -> do
+        rest <- go k
+        return $ [AST.StmtAssign v e] <> rest
+      ForLoop (Expr from) (Expr to) sub r -> do
+        var <- genvar
+        loop <- AST.Block <$> go (sub (exprVar var))
         rest <- go r
-        return $ Block [StmtFor var from to loop] <> rest
+        return $ [AST.StmtForEach (varName var) from to loop] <> rest
 
   -- User utilities
 
+newvar :: Variable a => CL (Expr a)
+newvar = liftF (NewVar id)
+
+initvar :: Variable a => Expr a -> CL (Expr a)
+initvar e = liftF (NewVarAssign e id)
+
+forEach :: Expr Int -> Expr Int -> (Expr Int -> CL ()) -> CL ()
+forEach from to sub = liftF (ForLoop from to sub ())
+
+eval :: Variable a => Expr a -> CL (Expr a)
+eval = initvar
+
+infixl 1 .=
+(.=) :: Expr a -> Expr a -> CL ()
+v .= e = liftF (Assign v e ())
+
+-- Embedding literals
+
+class Literal a where
+  literal :: a -> Expr a
+
+instance Literal Int where
+  literal n = Expr $ AST.ExprLit (show n)
+
+instance Literal Float where
+  literal n = Expr $ AST.ExprLit (show n)
+
+instance (Literal a, Num a) => Num (Expr a) where
+  fromInteger n = literal (fromInteger n)
+  abs = undefined
+  signum = undefined
+  negate n = 0 - n
+  (+) (Expr a) (Expr b) = Expr $ AST.ExprOp a "+" b
+  (-) (Expr a) (Expr b) = Expr $ AST.ExprOp a "-" b
+  (*) (Expr a) (Expr b) = Expr $ AST.ExprOp a "*" b
+
+instance (Literal a, Fractional a) => Fractional (Expr a) where
+  (/) (Expr a) (Expr b) = Expr $ AST.ExprOp a "/" b
+  recip a = 1 / a
+  fromRational x = fromInteger (numerator x) / fromInteger (denominator x)
+
+-- Builtin functions
+
+class DefineFunction r where
+  function_ :: AST.Name -> [AST.Expr] -> r
+
+instance DefineFunction (Expr a) where
+  function_ name args = Expr (AST.ExprCall name (reverse args))
+
+instance DefineFunction r => DefineFunction (Expr a -> r) where
+  function_ name args (Expr a) = function_ name (a : args)
+
+function :: DefineFunction r => AST.Name -> r
+function name = function_ name []
+
 get_global_id :: Expr Int -> CL (Expr Int)
-get_global_id dim = do v <- initVar (ExpCall (Var "get_global_id") dim)
-                       return (get v)
+get_global_id i = eval (function "get_global_id" i)
 
 sqrtf :: Expr Float -> Expr Float
-sqrtf x = ExpCall (Var "sqrt") x
-
-forLoop :: Expr Int -> Expr Int -> (Expr Int -> CL ()) -> CL ()
-forLoop from to sub = Free (ForLoop from to (sub . get) (Pure ()))
-
-get :: Var a -> Expr a
-get = ExpVar
-
-readVar :: Variable a => Var a -> CL (Expr a)
-readVar var = do w <- newvar
-                 w .= get var
-                 return (get w)
-
-initVar :: Variable a => Expr a -> CL (Var a)
-initVar expr = do v <- newvar
-                  v .= expr
-                  return v
-
-readPtr :: Var (Ptr a) -> Expr Int -> Expr a
-readPtr var i = ExpIndex (ExpVar var) i
-
-writePtr :: Var (Ptr a) -> Expr Int -> Expr a -> CL ()
-writePtr var i a = liftF (Assign (ExpIndex (ExpVar var) i) a ())
+sqrtf = function "sqrt"
 
 data Mode = R | W
-data Arr (m :: Mode) a = Arr (Var (Ptr a)) (Expr Int)
+newtype Array (m :: Mode) a = Array AST.Name
+type ArrayR = Array R
+type ArrayW = Array W
 
-instance Argument (Arr R Float) where
-  declareArgument argName = (Arr (Var argName)
-                              (ExpVar (Var (argName ++ "_offset"))),
-                             ["__global const float* " ++ argName,
-                              "const int " ++ argName ++ "_offset"])
+instance Argument (Array R Float) where
+  declareArgument argName = (Array argName, [base, offset])
+    where
+      base = AST.Decl "__global const float*" (argName ++ "_base")
+      offset = AST.Decl "const int" (argName ++ "_offset")
 
-instance Argument (Arr W Float) where
-  declareArgument argName = (Arr (Var argName)
-                              (ExpVar (Var (argName ++ "_offset"))),
-                             ["__global float* " ++ argName,
-                              "const int " ++ argName ++ "_offset"])
+instance Argument (Array W Float) where
+  declareArgument argName = (Array argName, [base, offset])
+    where
+      base = AST.Decl "__global float*" (argName ++ "_base")
+      offset = AST.Decl "const int" (argName ++ "_offset")
 
-readArr :: Arr m a -> Expr Int -> Expr a
-readArr (Arr ptr offset) i = readPtr ptr (offset + i)
-writeArr :: Arr W a -> Expr Int -> Expr a -> CL ()
-writeArr (Arr ptr offset) i a = writePtr ptr (offset + i) a
+at :: Array m a -> Expr Int -> Expr a
+at (Array name) (Expr i) = Expr (AST.ExprIndex (name ++ "_base") index)
+  where
+    offset = AST.ExprVar (name ++ "_offset")
+    index = AST.ExprOp offset "+" i
 
--- arrSize :: Arr m a -> Expr Int
--- arrSize (Arr ptr offset size) = size
-
--- foo :: Arr W Float -> CL ()
--- foo arr = do x <- initVar 0
---              forLoop 0 (arrSize arr) $ \i -> do
---                writeArr arr i (get x)
---                x .= get x + 1
+foo :: Array W Float -> CL ()
+foo arr = do x <- initvar 0
+             forEach 0 10 $ \i -> do
+               (arr `at` i) .= x
+               x .= x + 1
