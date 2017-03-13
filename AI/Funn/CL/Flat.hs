@@ -24,6 +24,7 @@ import           AI.Funn.CL.Blob
 import qualified AI.Funn.CL.Blob as Blob
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.Diff.Diff (Derivable(..), Diff(..))
+import           AI.Funn.CL.Code as C
 
 kSOURCE :: String
 kSOURCE = C.unpack $(embedFile "_flat.cl")
@@ -53,17 +54,31 @@ sigmoidDiff = Diff run
   where
     run xs = do
       ys <- createBlob
-      (runKernel kSOURCE "sigmoid"
+      (runKernel sigmoidSrc "run"
        [blobArg xs, blobArg ys]
        [] [fromIntegral n] [1])
       return (ys, backward ys)
 
     backward ys dys = do
       dxs <- createBlob
-      (runKernel kSOURCE "sigmoid_back"
+      (runKernel sigmoidBackSrc "run"
        [blobArg ys, blobArg dys, blobArg dxs]
        [] [fromIntegral n] [1])
       return dxs
+
+    sigmoidSrc = C.kernel sigmoid
+    sigmoid :: ArrayR Float -> ArrayW Float -> CL ()
+    sigmoid xs ys = do i <- get_global_id 0
+                       z <- eval (exp (xs `at` i))
+                       at ys i .= z / (1 + z)
+
+    sigmoidBackSrc = C.kernel sigmoidBack
+    sigmoidBack :: ArrayR Float -> ArrayR Float -> ArrayW Float -> CL ()
+    sigmoidBack ys dys dxs = do i <- get_global_id 0
+                                let
+                                  y = ys `at` i
+                                  dy = dys `at` i
+                                (dxs `at` i) .= dy * y * (1 - y)
 
     n :: Integer
     n = natVal (Proxy :: Proxy n)

@@ -125,7 +125,7 @@ sqrtBlob xs = do ys <- createBlob
     sqrtc :: C.ArrayR Float -> C.ArrayW Float -> C.CL ()
     sqrtc xs ys = do
       i <- C.get_global_id 0
-      C.at ys i .= sqrtf (C.at xs i)
+      C.at ys i .= sqrt (C.at xs i)
     sqrtSource = C.kernel sqrtc
 
 divideBlob :: forall n s. (KnownNat n) => Blob s n -> Blob s n -> OpenCL s (Blob s n)

@@ -47,12 +47,6 @@ instance Variable a => Argument (Expr a) where
     where
       var = Var (argName)
 
--- instance Argument (Expr Int) where
---   declareArgument argName = (exprName argName, [AST.Decl "int" argName])
-
--- instance Argument (Expr Float) where
---   declareArgument argName = (exprName argName, [AST.Decl "float" argName])
-
   -- Function -> Kernel
 
 class ToKernel a where
@@ -147,22 +141,54 @@ class Literal a where
 instance Literal Int where
   literal n = Expr $ AST.ExprLit (show n)
 
-instance Literal Float where
-  literal n = Expr $ AST.ExprLit (show n)
-
-instance (Literal a, Num a) => Num (Expr a) where
+instance Num (Expr Int) where
   fromInteger n = literal (fromInteger n)
-  abs = undefined
-  signum = undefined
+  abs = function "abs"
+  signum = function "sign"
   negate n = 0 - n
   (+) (Expr a) (Expr b) = Expr $ AST.ExprOp a "+" b
   (-) (Expr a) (Expr b) = Expr $ AST.ExprOp a "-" b
   (*) (Expr a) (Expr b) = Expr $ AST.ExprOp a "*" b
 
-instance (Literal a, Fractional a) => Fractional (Expr a) where
+instance Literal Float where
+  literal n = Expr $ AST.ExprLit (show n)
+
+instance Num (Expr Float) where
+  fromInteger n = literal (fromInteger n)
+  abs = function "fabs"
+  signum = function "sign"
+  negate n = 0 - n
+  (+) (Expr a) (Expr b) = Expr $ AST.ExprOp a "+" b
+  (-) (Expr a) (Expr b) = Expr $ AST.ExprOp a "-" b
+  (*) (Expr a) (Expr b) = Expr $ AST.ExprOp a "*" b
+
+instance Fractional (Expr Float) where
   (/) (Expr a) (Expr b) = Expr $ AST.ExprOp a "/" b
   recip a = 1 / a
   fromRational x = fromInteger (numerator x) / fromInteger (denominator x)
+
+constant :: String -> Expr a
+constant name = Expr (AST.ExprLit name)
+
+instance Floating (Expr Float) where
+  pi = constant "M_PI_F"
+  exp = function "exp"
+  log = function "log"
+  sqrt = function "sqrt"
+  (**) = function "pow"
+  logBase b e = log e / log b
+  sin = function "sin"
+  cos = function "cos"
+  tan = function "tan"
+  asin = function "asin"
+  acos = function "acos"
+  atan = function "atan"
+  sinh = function "sinh"
+  cosh = function "cosh"
+  tanh = function "tanh"
+  asinh = function "asinh"
+  acosh = function "acosh"
+  atanh = function "atanh"
 
 -- Builtin functions
 
@@ -181,8 +207,11 @@ function name = function_ name []
 get_global_id :: Expr Int -> CL (Expr Int)
 get_global_id i = eval (function "get_global_id" i)
 
-sqrtf :: Expr Float -> Expr Float
-sqrtf = function "sqrt"
+fmin :: Expr Float -> Expr Float -> Expr Float
+fmin = function "min"
+
+fmax :: Expr Float -> Expr Float -> Expr Float
+fmax = function "max"
 
 data Mode = R | W
 newtype Array (m :: Mode) a = Array AST.Name
@@ -211,4 +240,4 @@ foo :: Array W Float -> CL ()
 foo arr = do x <- initvar 0
              forEach 0 10 $ \i -> do
                (arr `at` i) .= x
-               x .= x + 1
+               x .= fmin (x + 1) 5
