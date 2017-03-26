@@ -94,11 +94,11 @@ main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
 
-  runOpenCL $ do
-    pars <- Blob.fromList [1, 1, 1, 0, 10, 20];
-    xs <- Blob.fromList [3, 4];
-    (o, _) <- runDiff (fcDiff @2 @2) (pars, xs);
-    Blob.toList o >>= liftIO . print
+  -- runOpenCL $ do
+  --   pars <- Blob.fromList [1, 1, 1, 0, 10, 20];
+  --   xs <- Blob.fromList [3, 4];
+  --   (o, _) <- runDiff (fcDiff @2 @2) (pars, xs);
+  --   Blob.toList o >>= liftIO . print
 
   running_average <- newMovingAverage 0.99
   iteration <- newIORef (0 :: Int)
