@@ -135,6 +135,8 @@ main = do
     liftIO $ print =<< CL.deviceExtensions dev
     liftIO $ print =<< CL.deviceGlobalMemSize dev
     liftIO $ print =<< CL.deviceMaxMemAllocSize dev
+    z <- Blob.fromList @0 []
+    liftIO . print =<< Blob.toList z
     o <- Blob.fromList @3 [0.3, 0.9, 0.5]
     initial <- Blob.fromList @3 [1, 2, 3]
     adam adamBlob initial (objective o) next

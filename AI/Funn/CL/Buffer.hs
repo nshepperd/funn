@@ -21,8 +21,12 @@ import qualified AI.Funn.CL.Mem as Mem
 
 data Buffer s a = Buffer !(Mem s a) !Int !Int
 
+-- Mem objects have a minimum size of 1. Since we want to support
+-- 0-size buffers, we do so here, by allocating with
+-- max(1, <buffer size>).
+
 malloc :: Storable a => Int -> OpenCL s (Buffer s a)
-malloc n = do mem <- Mem.malloc n
+malloc n = do mem <- Mem.malloc (max 1 n)
               return (Buffer mem 0 n)
 
 free :: MonadIO m => Buffer s a -> m ()
@@ -32,6 +36,7 @@ arg :: Buffer s a -> KernelArg s
 arg (Buffer mem offset size) = Mem.arg mem <> int32Arg offset
 
 fromList :: Storable a => [a] -> OpenCL s (Buffer s a)
+fromList [] = malloc 0
 fromList xs = do mem <- Mem.fromList xs
                  return (Buffer mem 0 (length xs))
 
