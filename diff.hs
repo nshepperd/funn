@@ -58,6 +58,8 @@ import qualified Data.Vector.Storable.Mutable as M
 import qualified Numeric.LinearAlgebra.HMatrix as HM
 
 import           AI.Funn.Common
+import           AI.Funn.Flat.Blob (Blob(..))
+import qualified AI.Funn.Flat.Blob as Blob
 import           AI.Funn.Diff.Diff (Diff(..), Additive(..), Derivable(..), (>>>))
 import qualified AI.Funn.Diff.Diff as Diff
 import           AI.Funn.Diff.Pointed
@@ -89,10 +91,10 @@ checkGradient' network = do gs <- replicateM 1000 (checkGradient network)
                             return (exp (x - d), exp x, exp (x + d))
 
 checkGradient :: (KnownNat a) => Diff IO (Blob a) Double -> IO Double
-checkGradient network = do input <- sampleIO (generateBlob $ uniform 0 1)
+checkGradient network = do input <- sampleIO (Blob.generate $ uniform 0 1)
                            (e, k) <- runDiff network input
                            d_input <- k 1
-                           perturb <- sampleIO (generateBlob $ uniform (-ε) ε)
+                           perturb <- sampleIO (Blob.generate $ uniform (-ε) ε)
                            let input' = input Diff.## perturb
                            (e', _) <- runDiff network input'
                            let δ_gradient = V.sum (V.zipWith (*) (getBlob d_input) (getBlob perturb))
@@ -108,7 +110,7 @@ unfoldM 0 m = return []
 unfoldM n m = (:) <$> m <*> unfoldM (n-1) m
 
 onehot :: Vector (Blob 128)
-onehot = V.generate 128 (\i -> unsafeBlob (replicate i 0 ++ [1] ++ replicate (127 - i) 0))
+onehot = V.generate 128 (\i -> Blob.fromList (replicate i 0 ++ [1] ++ replicate (127 - i) 0))
 
 sampleRNN :: Int -> s -> (s -> Blob 128 -> IO (s, Blob 128)) -> IO [Char]
 sampleRNN n s0 next = SL.evalStateT (unfoldM n step) (s0, 0)
@@ -270,8 +272,8 @@ main = do
             putStrLn $ printf "[% 11.4f | %i]  %f" tdiff i x
 
             when (i `mod` 50 == 0) $ do
-              let (par, c0) = splitBlob p
-              msg <- sampleRNN 200 (splitBlob c0) (runrnn par)
+              let (par, c0) = Blob.split p
+              msg <- sampleRNN 200 (Blob.split c0) (runrnn par)
               putStrLn msg
 
             when (i `mod` 100 == 0) $ do
@@ -284,13 +286,13 @@ main = do
 
         deepseqM (tvec, ovec)
 
-        adam (adamBlob { adam_α = learningRate }) initialParameters objective next
+        adam (Blob.adamBlob { adam_α = learningRate }) initialParameters objective next
 
 
   case cmd of
     Train Nothing input savefile logfile chunkSize lr modelSize -> do
       withNat modelSize $ \(proxy :: Proxy modelSize) -> do
-        initial_par <- sampleIO (generateBlob $ uniform (-0.5) (0.5))
+        initial_par <- sampleIO (Blob.generate $ uniform (-0.5) (0.5))
         deepseqM initial_par
         train proxy initial_par input savefile logfile chunkSize lr
 
@@ -310,10 +312,10 @@ main = do
         case openParBox box of
           Just initial -> do
             deepseqM initial
-            let (par, c0) = splitBlob initial
+            let (par, c0) = Blob.split initial
                 runrnn s c = do
                   ((c', o), _) <- Diff.runDiff (step proxy) (par, (s, c))
                   return (c', o)
-            msg <- sampleRNN n (splitBlob c0) runrnn
+            msg <- sampleRNN n (Blob.split c0) runrnn
             putStrLn msg
           Nothing -> error "model mismatch"

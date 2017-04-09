@@ -3,13 +3,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
-module AI.Funn.Flat.Flat (Blob(..),
-                     fcDiff, preluDiff, reluDiff, sigmoidDiff,
-                     mergeDiff, splitDiff, sumDiff, tanhDiff,
-                     quadraticCost, softmaxCost, generateBlob,
-                     splitBlob, concatBlob, unsafeBlob, scaleBlob,
-                     adamBlob
-                     ) where
+module AI.Funn.Flat.Flat (fcDiff, preluDiff, reluDiff, sigmoidDiff,
+                          mergeDiff, splitDiff, sumDiff, tanhDiff,
+                          quadraticCost, softmaxCost) where
 
 import           GHC.TypeLits
 
@@ -34,45 +30,8 @@ import           AI.Funn.Common
 import           AI.Funn.SGD
 import           AI.Funn.Diff.Diff (Diff(..), Additive(..), Derivable(..))
 import qualified AI.Funn.Diff.Diff as Diff
-
-newtype Blob (n :: Nat) = Blob { getBlob :: S.Vector Double }
-                        deriving (Show, Read)
-
-instance (Applicative m, KnownNat n) => Additive m (Blob n) where
-  plus (Blob a) (Blob b) = pure (Blob (a + b))
-  zero = pure (Blob (V.replicate n 0))
-    where n = natInt (Proxy :: Proxy n)
-  plusm blobs = pure (sumBlobs (toList blobs))
-
-instance Derivable (Blob n) where
-  type D (Blob n) = Blob n
-
-instance NFData (Blob n) where
-  rnf (Blob v) = rnf v
-
-instance CheckNAN (Blob n) where
-  check s (Blob xs) b = check s xs b
-
--- Functions --
-
-scaleBlob :: Double -> Blob n -> Blob n
-scaleBlob a (Blob xs) = Blob (HM.scale a xs)
-
-generateBlob :: forall f n. (Applicative f, KnownNat n) => f Double -> f (Blob n)
-generateBlob f = Blob . V.fromList <$> sequenceA (replicate n f)
-  where
-    n = natInt (Proxy :: Proxy n)
-
-unsafeBlob :: [Double] -> Blob n
-unsafeBlob xs = Blob (V.fromList xs)
-
-splitBlob :: forall a b. (KnownNat a, KnownNat b) => Blob (a + b) -> (Blob a, Blob b)
-splitBlob (Blob xs) = (Blob (V.take s1 xs), Blob (V.drop s1 xs))
-  where
-    s1 = natInt (Proxy :: Proxy a)
-
-concatBlob :: (KnownNat a, KnownNat b) => Blob a -> Blob b -> Blob (a + b)
-concatBlob (Blob as) (Blob bs) = Blob (as <> bs)
+import           AI.Funn.Flat.Blob (Blob(..))
+import qualified AI.Funn.Flat.Blob as Blob
 
 -- Diff --
 
@@ -111,7 +70,7 @@ preluDiff = Diff run
           output = V.map (prelu α) xs
           backward (Blob !δ) = let dx = V.zipWith (*) δ (V.map (prelu' α) xs)
                                    dα = V.sum $ V.zipWith (*) δ (V.map (min 0) xs)
-                               in return (unsafeBlob [dα], Blob dx)
+                               in return (Blob.fromList [dα], Blob dx)
       in return (Blob output, backward)
 
 reluDiff :: forall n m. (Monad m, KnownNat n) => Diff m (Blob n) (Blob n)
@@ -156,14 +115,14 @@ tanhDiff = Diff run
 mergeDiff :: (Monad m, KnownNat a, KnownNat b) => Diff m (Blob a, Blob b) (Blob (a + b))
 mergeDiff = Diff run
   where run (!a, !b) =
-          let backward δ = pure (splitBlob δ)
-          in pure (concatBlob a b, backward)
+          let backward δ = pure (Blob.split δ)
+          in pure (Blob.cat a b, backward)
 
 splitDiff :: (Monad m, KnownNat a, KnownNat b) => Diff m (Blob (a + b)) (Blob a, Blob b)
 splitDiff = Diff run
   where run ab =
-          let backward (da, db) = pure (concatBlob da db)
-          in pure (splitBlob ab, backward)
+          let backward (da, db) = pure (Blob.cat da db)
+          in pure (Blob.split ab, backward)
 
 
 quadraticCost :: (Monad m, KnownNat n) => Diff m (Blob n, Blob n) Double
@@ -171,8 +130,8 @@ quadraticCost = Diff run
   where
     run (Blob !o, Blob !target)
       = let diff = V.zipWith (-) o target
-            backward dcost = return ((scaleBlob dcost (Blob diff),
-                                      scaleBlob dcost (Blob (V.map negate diff))))
+            backward dcost = return ((Blob.scale dcost (Blob diff),
+                                      Blob.scale dcost (Blob (V.map negate diff))))
         in return (0.5 * ssq diff, backward)
 
     ssq :: HM.Vector Double -> Double
@@ -192,34 +151,6 @@ softmaxCost = Diff run
 natInt :: (KnownNat n) => proxy n -> Int
 natInt p = fromIntegral (natVal p)
 
-foreign import ccall "vector_add" ffi_vector_add :: CInt -> Ptr Double -> Ptr Double -> IO ()
-
-{-# NOINLINE vector_add #-}
-vector_add :: M.IOVector Double -> S.Vector Double -> IO ()
-vector_add tgt src = do M.unsafeWith tgt $ \tbuf -> do
-                          S.unsafeWith src $ \sbuf -> do
-                            ffi_vector_add (fromIntegral n) tbuf sbuf
-  where
-    n = M.length tgt
-
-addBlobsIO :: M.IOVector Double -> [Blob n] -> IO ()
-addBlobsIO target ys = go target ys
-  where
-    go target [] = return ()
-    go target (Blob v:vs) = do
-      vector_add target v
-      go target vs
-
-sumBlobs :: forall n. (KnownNat n) => [Blob n] -> Blob n
-sumBlobs [] = Diff.unit
-sumBlobs [x] = x
-sumBlobs xs = Blob $ unsafePerformIO go
-  where
-    go = do target <- M.replicate n 0
-            addBlobsIO target xs
-            V.unsafeFreeze target
-    n = natInt (Proxy :: Proxy n)
-
 foreign import ccall "outer_product" outer_product :: CInt -> CInt -> Ptr Double -> Ptr Double -> Ptr Double -> IO ()
 
 {-# NOINLINE flat_outer #-}
@@ -237,8 +168,8 @@ flat_outer u v = unsafePerformIO go
 
 adamBlob :: forall m (n :: Nat). (Monad m, KnownNat n) => AdamConfig m (Blob n) (Blob n)
 adamBlob = defaultAdam {
-  adam_pure_d = \x -> generateBlob (pure x),
-  adam_scale_d = \x b -> pure (scaleBlob x b),
+  adam_pure_d = \x -> Blob.generate (pure x),
+  adam_scale_d = \x b -> pure (Blob.scale x b),
   adam_add_d = plus,
   adam_square_d = \(Blob b) -> pure $ Blob (V.map (^2) b),
   adam_sqrt_d = \(Blob b) -> pure $ Blob (V.map sqrt b),

@@ -23,7 +23,8 @@ import           Foreign.Ptr
 import           System.IO.Unsafe
 
 import           AI.Funn.Diff.Diff (Derivable(..), Additive(..), Diff(..))
-import           AI.Funn.Flat.Flat
+import           AI.Funn.Flat.Blob (Blob(..))
+import qualified AI.Funn.Flat.Blob as Blob
 
 foreign import ccall "lstm_forward" lstmForwardFFI :: CInt -> Ptr Double -> Ptr Double -> Ptr Double -> Ptr Double -> Ptr Double -> Ptr Double -> IO ()
 foreign import ccall "lstm_backward" lstmBackwardFFI :: CInt -> Ptr Double -> Ptr Double -> Ptr Double -> Ptr Double -> Ptr Double -> Ptr Double -> Ptr Double -> IO ()

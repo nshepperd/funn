@@ -39,6 +39,8 @@ import           AI.Funn.Common
 import           AI.Funn.Flat.Flat
 import           AI.Funn.Diff.Diff
 import           AI.Funn.NatLog
+import           AI.Funn.Flat.Blob (Blob(..))
+import qualified AI.Funn.Flat.Blob as Blob
 
 foreign import ccall "layer_resize_forward" resize_forward_ffi :: CInt -> CInt -> Ptr Double -> Ptr Double -> IO ()
 foreign import ccall "layer_resize_backward" resize_backward_ffi :: CInt -> CInt -> Ptr Double -> Ptr Double -> IO ()

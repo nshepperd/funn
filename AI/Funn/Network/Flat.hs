@@ -29,7 +29,8 @@ import           AI.Funn.Network.Network
 import           AI.Funn.Diff.Diff (Diff(..), Additive(..), Derivable(..))
 import qualified AI.Funn.Diff.Diff as Diff
 import qualified AI.Funn.Flat.Flat as Flat
-import           AI.Funn.Flat.Flat (Blob(..))
+import           AI.Funn.Flat.Blob (Blob(..))
+import qualified AI.Funn.Flat.Blob as Blob
 
 -- Diff --
 

@@ -31,6 +31,8 @@ import           GHC.TypeLits
 import           AI.Funn.Common
 import           AI.Funn.Diff.Diff (Additive(..), Derivable(..), Diff(..))
 import qualified AI.Funn.Diff.Diff as Diff
+import           AI.Funn.Flat.Blob (Blob(..))
+import qualified AI.Funn.Flat.Blob as Blob
 import           AI.Funn.Flat.Flat
 import           AI.Funn.SomeNat
 
@@ -43,7 +45,7 @@ params (Network p _ _) = fromIntegral (natVal p)
 concatInit :: (KnownNat a, KnownNat b)
            => RVar (Blob a) -> RVar (Blob b)
            -> RVar (Blob (a + b))
-concatInit = liftA2 concatBlob
+concatInit = liftA2 Blob.cat
 
 first :: (Monad m) => Network m a b -> Network m (a,c) (b,c)
 first (Network p diff init) = Network p run init
@@ -56,7 +58,7 @@ second (Network p diff init) = Network p run init
     run = Diff.second Diff.swap >>> Diff.assocL >>> Diff.first diff >>> Diff.swap
 
 liftDiff :: (Monad m) => Diff m a b -> Network m a b
-liftDiff diff = Network (Proxy @ 0) run (generateBlob (pure 0))
+liftDiff diff = Network (Proxy @ 0) run (pure (Blob.fromList []))
   where
     run = Diff (\(e, a) -> pure (a, \da -> pure (e, da))) >>> diff
 
@@ -76,13 +78,13 @@ connect (Network (p1 :: Proxy p1) diff1 init1) (Network (p2 :: Proxy p2) diff2 i
     p = Proxy @ (p1 + p2)
     init = concatInit init1 init2
     diff = Diff $ \(params, a) -> do
-      let (par1, par2) = splitBlob params
+      let (par1, par2) = Blob.split params
       (b, k1) <- runDiff diff1 (par1, a)
       (c, k2) <- runDiff diff2 (par2, b)
       let backward dc = do
             (dpar2, db) <- k2 dc
             (dpar1, da) <- k1 db
-            return (concatBlob dpar1 dpar2, da)
+            return (Blob.cat dpar1 dpar2, da)
       return (c, backward)
 
 net_empty :: (Monad m) => Network m a a
