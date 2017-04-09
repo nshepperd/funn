@@ -5,12 +5,12 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 module AI.Funn.CL.MonadCL (
-  OpenCL, runOpenCL,
-  getContext, getCommandQueue, getDevice,
-  createKernel, KernelArg(..), runKernel,
+  OpenCL, runOpenCL, MonadCL(..),
+  KernelArg(..), runKernel,
   doubleArg, int32Arg) where
 
 import           Control.Applicative
@@ -64,8 +64,20 @@ programs f (S x y) = (\x' -> S x' y) <$> f x
 kernels :: Lens' S (Map (String,String) CL.Kernel)
 kernels f (S x y) = S x <$> (f y)
 
-newtype OpenCL s a = OpenCL { getOpenCL :: ReaderT R (StateT S IO) a }
-                     deriving (Functor, Applicative, Monad, MonadIO)
+class MonadIO m => MonadCL s m | m -> s where
+  getPlatformID :: m CL.PlatformID
+  getContext :: m CL.Context
+  getDeviceID :: m CL.DeviceID
+  getCommandQueue :: m CL.CommandQueue
+  getKernel :: String -> String -> String -> m CL.Kernel
+
+newtype OpenCLT s m a = OpenCL { getOpenCL :: ReaderT R (StateT S m) a }
+                      deriving (Functor, Applicative, Monad, MonadIO)
+
+instance MonadTrans (OpenCLT s) where
+  lift m = OpenCL (lift (lift m))
+
+type OpenCL s = OpenCLT s IO
 
 runOpenCL :: (forall s. OpenCL s a) -> IO a
 runOpenCL (OpenCL k) = do plat:_ <- CL.getPlatformIDs
@@ -74,37 +86,35 @@ runOpenCL (OpenCL k) = do plat:_ <- CL.getPlatformIDs
                           q <- CL.createCommandQueue ctx dev []
                           evalStateT (runReaderT k (R plat ctx dev q)) (S Map.empty Map.empty)
 
-getProgram :: String -> OpenCL s CL.Program
-getProgram source = do ctx <- OpenCL $ view context
-                       dev <- OpenCL $ view device
-                       prg <- OpenCL $ use (programs . at source)
-                       case prg of
-                        Just program -> return program
-                        Nothing -> do program <- liftIO $ CL.createProgram ctx source
-                                      liftIO $ CL.buildProgram program [dev] ""
-                                      OpenCL (programs . at source .= Just program)
-                                      return program
+instance MonadIO m => MonadCL s (OpenCLT s m) where
+  getPlatformID = OpenCL (view platformID)
+  getContext = OpenCL (view context)
+  getDeviceID = OpenCL (view device)
+  getCommandQueue = OpenCL (view queue)
+  getKernel = getKernelCL
 
-createKernel :: String -> String -> OpenCL s CL.Kernel
-createKernel source entryPoint = do program <- getProgram source
-                                    liftIO $ CL.createKernel program entryPoint
+getProgram :: MonadIO m => String -> String -> OpenCLT s m CL.Program
+getProgram key source = do ctx <- OpenCL $ view context
+                           dev <- OpenCL $ view device
+                           prg <- OpenCL $ use (programs . at key)
+                           case prg of
+                             Just program -> return program
+                             Nothing -> do program <- liftIO $ CL.createProgram ctx source
+                                           liftIO $ CL.buildProgram program [dev] ""
+                                           OpenCL (programs . at key .= Just program)
+                                           return program
 
-getKernel :: String -> String -> OpenCL s CL.Kernel
-getKernel source entryPoint = do k <- OpenCL $ use (kernels . at (source,entryPoint))
-                                 case k of
-                                  Just kernel -> return kernel
-                                  Nothing -> do kernel <- createKernel source entryPoint
-                                                OpenCL (kernels . at (source,entryPoint) .= Just kernel)
-                                                return kernel
+createKernel :: MonadIO m => String -> String -> String -> OpenCLT s m CL.Kernel
+createKernel key source entryPoint = do program <- getProgram key source
+                                        liftIO $ CL.createKernel program entryPoint
 
-getContext :: OpenCL s CL.Context
-getContext = OpenCL (view context)
-
-getDevice :: OpenCL s CL.DeviceID
-getDevice = OpenCL (view device)
-
-getCommandQueue :: OpenCL s CL.CommandQueue
-getCommandQueue = OpenCL (view queue)
+getKernelCL :: MonadIO m => String -> String -> String -> OpenCLT s m CL.Kernel
+getKernelCL key source entryPoint = do k <- OpenCL $ use (kernels . at (key,entryPoint))
+                                       case k of
+                                         Just kernel -> return kernel
+                                         Nothing -> do kernel <- createKernel key source entryPoint
+                                                       OpenCL (kernels . at (key,entryPoint) .= Just kernel)
+                                                       return kernel
 
 newtype KernelArg s = KernelArg (([CL.KernelArg] -> IO ()) -> IO ())
 
@@ -125,10 +135,10 @@ int32Arg a = KernelArg run
   where
     run f = f [CL.VArg (fromIntegral a :: Int32)]
 
-runKernel :: String -> String  -> [KernelArg s] -> [CL.ClSize] -> [CL.ClSize] -> [CL.ClSize] -> OpenCL s ()
+runKernel :: MonadCL s m => String -> String  -> [KernelArg s] -> [CL.ClSize] -> [CL.ClSize] -> [CL.ClSize] -> m ()
 runKernel source entryPoint args globalOffsets globalSizes localSizes =
   do queue <- getCommandQueue
-     kernel <- getKernel source entryPoint
+     kernel <- getKernel source source entryPoint
      let go [] real_args = do
            CL.setKernelArgs kernel (real_args [])
            ev <- CL.enqueueNDRangeKernel queue kernel globalOffsets globalSizes localSizes []

@@ -130,7 +130,7 @@ main = do
       m
 
   runOpenCL $ do
-    dev <- getDevice
+    dev <- getDeviceID
     liftIO $ print =<< CL.deviceVersion dev
     liftIO $ print =<< CL.deviceExtensions dev
     liftIO $ print =<< CL.deviceGlobalMemSize dev
