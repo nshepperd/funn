@@ -5,10 +5,10 @@
 module AI.Funn.Network.Network (
   Network(..),
   -- runNetwork, runNetwork', runNetwork_,
-  -- liftDiff,
-  -- left, right, (>>>),
-  -- (***), idWith,
-  -- assocL, assocR, swap
+  liftDiff,
+  first, second, (>>>),
+  (***),
+  assocL, assocR, swap
   ) where
 
 import           Prelude hiding ((.), id)
