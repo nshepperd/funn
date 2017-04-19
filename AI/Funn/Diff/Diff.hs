@@ -9,7 +9,7 @@ module AI.Funn.Diff.Diff (
   runDiff_, runDiffForward,
   first, second, (>>>),
   assocL, assocR, swap,
-  fst, snd
+  fst, snd, dup
   ) where
 
 import           Prelude hiding ((.), id, fst, snd)
@@ -143,3 +143,9 @@ snd = Diff run
   where
     run (_,b) = let back db = fmap (\da -> (da, db)) zero
                 in pure (b, back)
+
+dup :: (Applicative m, Additive m (D a)) => Diff m a (a,a)
+dup = Diff run
+  where
+    run a = pure ((a,a), backward)
+    backward (da1,da2) = plus da1 da2

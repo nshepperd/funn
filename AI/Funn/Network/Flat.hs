@@ -3,10 +3,10 @@
 {-# LANGUAGE ScopedTypeVariables, TypeApplications #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
-module AI.Funn.Network.Flat (sumLayer, fcLayer
-                             -- preluLayer, reluLayer, sigmoidLayer,
-                             -- mergeLayer, splitLayer, tanhLayer,
-                             -- quadraticCost, softmaxCost
+module AI.Funn.Network.Flat (sumLayer, fcLayer,
+                             preluLayer, reluLayer, sigmoidLayer,
+                             mergeLayer, splitLayer, tanhLayer,
+                             quadraticCost, softmaxCost
                             ) where
 
 import           GHC.TypeLits
@@ -49,134 +49,32 @@ fcLayer = Network Proxy Flat.fcDiff initial
     from = fromIntegral $ natVal (Proxy @ x)
     to = fromIntegral $ natVal (Proxy @ y)
 
--- preluDiff :: forall n m. (Monad m, KnownNat n) => Diff m (Blob 1, Blob n) (Blob n)
--- preluDiff = Diff run
---   where
---     run (Blob p, Blob !xs) =
---       let α = V.head p
---           output = V.map (prelu α) xs
---           backward (Blob !δ) = let dx = V.zipWith (*) δ (V.map (prelu' α) xs)
---                                    dα = V.sum $ V.zipWith (*) δ (V.map (min 0) xs)
---                                in return (unsafeBlob [dα], Blob dx)
---       in return (Blob output, backward)
+preluLayer :: forall n m. (Monad m, KnownNat n) => Network m (Blob n) (Blob n)
+preluLayer = Network Proxy Flat.preluDiff initial
+  where
+    -- Looks Linear (LL) initialisation
+    initial = Blob.generate (pure 1)
 
--- reluDiff :: forall n m. (Monad m, KnownNat n) => Diff m (Blob n) (Blob n)
--- reluDiff = Diff run
---   where
---     run (Blob !xs) =
---       let α = 0
---           output = V.map (prelu α) xs
---           backward (Blob !δ) = let dx = V.zipWith (*) δ (V.map (prelu' α) xs)
---                                in return (Blob dx)
---       in return (Blob output, backward)
+dupLayer :: forall n m. (Monad m, KnownNat n) => Network m (Blob n) (Blob n, Blob n)
+dupLayer = liftDiff Diff.dup
 
--- sigmoidDiff :: forall n m. (Monad m, KnownNat n) => Diff m (Blob n) (Blob n)
--- sigmoidDiff = Diff run
---   where
---     run (Blob !input) =
---           let output = V.map σ input
---               backward (Blob !δs) =
---                 let di = V.zipWith (\y δ -> y * (1 - y) * δ) output δs
---                 in return (Blob di)
---           in return (Blob output, backward)
+reluLayer :: forall n m. (Monad m, KnownNat n) => Network m (Blob n) (Blob n)
+reluLayer = liftDiff Flat.reluDiff
 
---     σ x = if x < 0 then
---             exp x / (1 + exp x)
---           else
---             1 / (1 + exp (-x))
+sigmoidLayer :: forall n m. (Monad m, KnownNat n) => Network m (Blob n) (Blob n)
+sigmoidLayer = liftDiff Flat.sigmoidDiff
 
+tanhLayer :: forall n m. (Monad m, KnownNat n) => Network m (Blob n) (Blob n)
+tanhLayer = liftDiff Flat.tanhDiff
 
--- tanhDiff :: forall n m. (Monad m, KnownNat n) => Diff m (Blob n) (Blob n)
--- tanhDiff = Diff run
---   where
---     run (Blob !input) =
---           let output = V.map tanh input
---               backward (Blob !δs) =
---                 let di = V.zipWith (\y δ -> tanh' y * δ) output δs
---                 in return (Blob di)
---           in return (Blob output, backward)
+mergeLayer :: (Monad m, KnownNat a, KnownNat b) => Network m (Blob a, Blob b) (Blob (a + b))
+mergeLayer = liftDiff Flat.mergeDiff
 
---     tanh x = (exp x - exp (-x)) / (exp x + exp (-x))
---     tanh' y = 1 - y^2
+splitLayer :: (Monad m, KnownNat a, KnownNat b) => Network m (Blob (a + b)) (Blob a, Blob b)
+splitLayer = liftDiff Flat.splitDiff
 
--- mergeDiff :: (Monad m, KnownNat a, KnownNat b) => Diff m (Blob a, Blob b) (Blob (a + b))
--- mergeDiff = Diff run
---   where run (!a, !b) =
---           let backward δ = pure (splitBlob δ)
---           in pure (concatBlob a b, backward)
+quadraticCost :: (Monad m, KnownNat n) => Network m (Blob n, Blob n) Double
+quadraticCost = liftDiff Flat.quadraticCost
 
--- splitDiff :: (Monad m, KnownNat a, KnownNat b) => Diff m (Blob (a + b)) (Blob a, Blob b)
--- splitDiff = Diff run
---   where run ab =
---           let backward (da, db) = pure (concatBlob da db)
---           in pure (splitBlob ab, backward)
-
-
--- quadraticCost :: (Monad m, KnownNat n) => Diff m (Blob n, Blob n) Double
--- quadraticCost = Diff run
---   where
---     run (Blob !o, Blob !target)
---       = let diff = V.zipWith (-) o target
---             backward dcost = return ((scaleBlob dcost (Blob diff),
---                                       scaleBlob dcost (Blob (V.map negate diff))))
---         in return (0.5 * ssq diff, backward)
-
---     ssq :: HM.Vector Double -> Double
---     ssq xs = V.sum $ V.map (\x -> x*x) xs
-
--- softmaxCost :: (Monad m, KnownNat n) => Diff m (Blob n, Int) Double
--- softmaxCost = Diff run
---   where run (Blob !o, !target)
---           = let ltotal = log (V.sum . V.map exp $ o)
---                 cost = (-(o V.! target) + ltotal)
---                 backward dcost = let back = V.imap (\j x -> exp(x - ltotal) - if target == j then dcost else 0) o
---                                  in return (Blob back, ())
---             in return (cost, backward)
-
--- -- Special --
-
--- natInt :: (KnownNat n) => proxy n -> Int
--- natInt p = fromIntegral (natVal p)
-
--- foreign import ccall "vector_add" ffi_vector_add :: CInt -> Ptr Double -> Ptr Double -> IO ()
-
--- {-# NOINLINE vector_add #-}
--- vector_add :: M.IOVector Double -> S.Vector Double -> IO ()
--- vector_add tgt src = do M.unsafeWith tgt $ \tbuf -> do
---                           S.unsafeWith src $ \sbuf -> do
---                             ffi_vector_add (fromIntegral n) tbuf sbuf
---   where
---     n = M.length tgt
-
--- addBlobsIO :: M.IOVector Double -> [Blob n] -> IO ()
--- addBlobsIO target ys = go target ys
---   where
---     go target [] = return ()
---     go target (Blob v:vs) = do
---       vector_add target v
---       go target vs
-
--- sumBlobs :: forall n. (KnownNat n) => [Blob n] -> Blob n
--- sumBlobs [] = Diff.unit
--- sumBlobs [x] = x
--- sumBlobs xs = Blob $ unsafePerformIO go
---   where
---     go = do target <- M.replicate n 0
---             addBlobsIO target xs
---             V.unsafeFreeze target
---     n = natInt (Proxy :: Proxy n)
-
--- foreign import ccall "outer_product" outer_product :: CInt -> CInt -> Ptr Double -> Ptr Double -> Ptr Double -> IO ()
-
--- {-# NOINLINE flat_outer #-}
--- flat_outer :: S.Vector Double -> S.Vector Double -> S.Vector Double
--- flat_outer u v = unsafePerformIO go
---   where
---     go = do target <- M.new (n*m) :: IO (M.IOVector Double)
---             S.unsafeWith u $ \ubuf -> do
---               S.unsafeWith v $ \vbuf -> do
---                 M.unsafeWith target $ \tbuf -> do
---                   outer_product (fromIntegral n) (fromIntegral m) ubuf vbuf tbuf
---             V.unsafeFreeze target
---     n = V.length u
---     m = V.length v
+softmaxCost :: (Monad m, KnownNat n) => Network m (Blob n, Int) Double
+softmaxCost = liftDiff Flat.softmaxCost

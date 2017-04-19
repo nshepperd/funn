@@ -8,7 +8,9 @@ module AI.Funn.Network.Network (
   liftDiff,
   first, second, (>>>),
   (***),
-  assocL, assocR, swap
+  assocL, assocR, swap,
+  fromParams, dupLayer,
+  fstNetwork, sndNetwork
   ) where
 
 import           Prelude hiding ((.), id)
@@ -70,6 +72,18 @@ assocR = liftDiff Diff.assocR
 
 swap :: (Monad m) => Network m (a,b) (b,a)
 swap = liftDiff Diff.swap
+
+fromParams :: (Monad m, KnownNat n) => RVar (Blob n) -> Network m a (Blob n, a)
+fromParams initial = Network Proxy id initial
+
+dupLayer :: (Monad m, Additive m (D a)) => Network m a (a,a)
+dupLayer = liftDiff Diff.dup
+
+fstNetwork :: (Monad m, Additive m (D b)) => Network m (a,b) a
+fstNetwork = liftDiff Diff.fst
+
+sndNetwork :: (Monad m, Additive m (D a)) => Network m (a,b) b
+sndNetwork = liftDiff Diff.snd
 
 connect :: (Monad m) => Network m a b -> Network m b c -> Network m a c
 connect (Network (p1 :: Proxy p1) diff1 init1) (Network (p2 :: Proxy p2) diff2 init2) =
