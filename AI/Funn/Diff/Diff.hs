@@ -56,6 +56,9 @@ instance Derivable Int where
 instance (Derivable a, Derivable b) => Derivable (a, b) where
   type D (a, b) = (D a, D b)
 
+instance (Derivable a, Derivable b, Derivable c) => Derivable (a, b, c) where
+  type D (a, b, c) = (D a, D b, D c)
+
 instance Derivable a => Derivable (Vector a) where
   type D (Vector a) = Vector (D a)
 
@@ -69,6 +72,12 @@ instance (Applicative m, Additive m a, Additive m b) => Additive m (a, b) where
   zero = liftA2 (,) zero zero
   plusm abs = let (as, bs) = unzip (toList abs)
               in liftA2 (,) (plusm as) (plusm bs)
+
+instance (Applicative m, Additive m a, Additive m b, Additive m c) => Additive m (a, b, c) where
+  plus (a1, b1, c1) (a2, b2, c2) = liftA3 (,,) (plus a1 a2) (plus b1 b2) (plus c1 c2)
+  zero = liftA3 (,,) zero zero zero
+  plusm abs = let (as, bs, cs) = unzip3 (toList abs)
+              in liftA3 (,,) (plusm as) (plusm bs) (plusm cs)
 
 instance (Applicative m) => Additive m Double where
   plus a b = pure (a + b)

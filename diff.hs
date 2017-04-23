@@ -4,6 +4,7 @@
 {-# LANGUAGE TypeApplications, PartialTypeSignatures #-}
 {-# LANGUAGE FlexibleInstances, MultiParamTypeClasses #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE ConstraintKinds #-}
 module Main where
 import           Control.Applicative
 import           Control.Monad
@@ -160,27 +161,60 @@ openParBox (ParBox (b :: Blob m)) =
     Just Refl -> Just b
     Nothing -> Nothing
 
+lstm :: (Monad m, KnownNat n)
+      => Ref s (Blob (2*n))
+      -> Ref s (Blob n)
+      -> Ref s (Blob (4*n))
+      -> Pointed m s (Ref s (Blob n), Ref s (Blob n))
+lstm pars hidden inputs = do ins <- packrec (pars, (hidden, inputs))
+                             out <- lstmDiff <-- ins
+                             unpack out
+
+amix :: (Monad m, KnownNat size, KnownNat a, KnownNat b)
+     => Proxy size -> Ref s (Blob _) -> Ref s (Blob a)
+     -> Pointed m s (Ref s (Blob b))
+amix p pars input = do ins <- pack (pars, input)
+                       pushDiff ins (amixDiff p)
+
+tanhP :: (Monad m, KnownNat a) => Ref s (Blob a) -> Pointed m s (Ref s (Blob a))
+tanhP input = pushDiff input tanhDiff
+
+split3 :: (Monad m, KnownNat a, KnownNat b, KnownNat c)
+       => Ref s (Blob (a+b+c))
+       -> Pointed m s (Ref s (Blob a), Ref s (Blob b), Ref s (Blob c))
+split3 input = do (part1, part23) <- splitDiff =<- input
+                  (part2,  part3) <- splitDiff =<- part23
+                  return (part1, part2, part3)
+
+type Affine m a = (Derivable a, Additive m (D a))
+
+scanlP :: (Monad m, Affine m x, Affine m st, Affine m i, Affine m o)
+       => Diff m (x,(st,i)) (st, o)
+       -> Ref s x
+       -> Ref s st
+       -> Ref s (Vector i)
+       -> Pointed m s (Ref s st, Ref s (Vector o))
+scanlP diff x st vi = do ins <- packrec (x, (st, vi))
+                         out <- pushDiff ins (scanlDiff diff)
+                         unpack out
+
 step :: (Monad m, KnownNat modelSize) => Proxy modelSize -> Diff m (Blob _, ((Blob modelSize, Blob modelSize), Blob 128)) ((Blob modelSize, Blob modelSize), Blob 128)
 step Proxy = runPointed $ \in_all -> do
-  (Var pars, ((Var hidden, Var prev), Var char)) <- unpack in_all
-  (Var p1, Var pars1) <- splitDiff <-- pars
-  Var combined_in <- mergeDiff <-- (prev, char)
-  Var lstm_in <- (tanhDiff <<< amixDiff (Proxy @ 5)) <-- (p1, combined_in)
-  (Var p2, Var p3) <- splitDiff <-- pars1
-  (Var hidden', Var lstm_out) <- lstmDiff <-- (p2, (hidden, lstm_in))
-  -- (Var p3, Var pars3) <- splitDiff <-- pars2
-  Var final_dist <- amixDiff (Proxy @ 5) <-- (p3, lstm_out)
-  pack ((hidden', lstm_out), final_dist)
+  (pars, ((hidden, prev), char)) <- unpackrec in_all
+  (p1, p2, p3) <- split3 pars
+  combined_in <- mergeDiff -<= (prev, char)
+  lstm_in <- tanhP =<< amix (Proxy @ 5) p1 combined_in
+  (hidden_out, lstm_out) <- lstm p2 hidden lstm_in
+  final_dist <- amix (Proxy @ 5) p3 lstm_out
+  packrec ((hidden_out, lstm_out), final_dist)
 
 network :: (Monad m, KnownNat modelSize) => Proxy modelSize -> Diff m (Blob _, Vector (Blob 128)) (Vector (Blob 128))
 network modelSize = runPointed $ \in_all -> do
-  (Var pars, Var inputs) <- unpack in_all
-  (Var step_pars, Var init) <- splitDiff <-- pars
-  (Var h0, Var c0) <- splitDiff <-- init
-  (Var s, Var o) <- scanlDiff step' <-- (step_pars, ((h0, c0), inputs))
-  return o
-    where
-      step' = step modelSize
+  (pars, inputs) <- unpack in_all
+  (step_pars, h0, c0) <- split3 pars
+  initial_state <- pack (h0, c0)
+  (s, vo) <- scanlP (step modelSize) step_pars initial_state inputs
+  return vo
 
 evalNetwork :: (Monad m, KnownNat modelSize) => Proxy modelSize -> Diff m (Blob _, (Vector (Blob 128), Vector Int)) Double
 evalNetwork size = Diff.assocL >>> Diff.first network' >>> zipDiff >>> mapDiff softmaxCost >>> vsumDiff
