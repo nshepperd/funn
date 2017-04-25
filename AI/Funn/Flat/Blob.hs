@@ -82,7 +82,13 @@ split (Blob xs) = (Blob (V.take s1 xs), Blob (V.drop s1 xs))
     s1 = natInt (Proxy :: Proxy a)
 
 cat :: (KnownNat a, KnownNat b) => Blob a -> Blob b -> Blob (a + b)
-cat (Blob as) (Blob bs) = Blob (as <> bs)
+cat x@(Blob as) y@(Blob bs)
+  | a == 0 = Blob bs
+  | b == 0 = Blob as
+  | otherwise = Blob (as <> bs)
+  where
+    a = natVal x
+    b = natVal y
 
 -- Special --
 
