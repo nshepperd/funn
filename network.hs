@@ -61,7 +61,7 @@ import qualified Numeric.LinearAlgebra.HMatrix as HM
 import           AI.Funn.Common
 import           AI.Funn.Flat.Blob (Blob(..))
 import qualified AI.Funn.Flat.Blob as Blob
-import           AI.Funn.Diff.Diff (Diff(..), Additive(..), Derivable(..), (>>>))
+import           AI.Funn.Diff.Diff (Diff(..), Derivable(..), (>>>))
 import qualified AI.Funn.Diff.Diff as Diff
 import           AI.Funn.Network.Network
 import           AI.Funn.Network.Flat
@@ -151,10 +151,10 @@ step Proxy = assocR
              >>> second dupLayer >>> assocL >>> second (amixLayer (Proxy @ 5))
 
 network :: (Monad m, KnownNat size) => Proxy size -> Network m (Vector (Blob 128)) (Vector (Blob 128))
-network size = fromParams (Blob.generate (pure 0)) -- (Blob 2n, Vector (Blob 128))
-                    >>> first splitLayer                -- ((Blob n, Blob n), Vector (Blob 128))
-                    >>> scanlLayer (step size)     -- ((Blob n, Blob n), Vector (Blob 128))
-                    >>> sndNetwork
+network size = addParams (Blob.generate (pure 0)) $
+                first splitLayer               -- ((Blob n, Blob n), Vector (Blob 128))
+                >>> scanlLayer (step size)     -- ((Blob n, Blob n), Vector (Blob 128))
+                >>> sndNetwork
 
 evalNetwork :: (Monad m, KnownNat size) => Proxy size -> Network m (Vector (Blob 128), Vector Int) Double
 evalNetwork size = first (network size) >>> zipLayer >>> mapLayer softmaxCost >>> vsumLayer
@@ -183,7 +183,6 @@ model size = case step size of
 runrnn :: Monad m => Diff m (par, (s, c)) (s, c) -> par -> s -> c -> m (s, c)
 runrnn diff par s c = Diff.runDiffForward diff (par, (s, c))
 
-
 train :: (KnownNat modelSize) => Proxy modelSize -> Maybe ParBox -> FilePath -> (Maybe FilePath) -> (Maybe FilePath) -> Int -> Double -> IO ()
 train modelSize initialParameters input savefile logfile chunkSize learningRate =
       case model modelSize of
@@ -194,6 +193,8 @@ train modelSize initialParameters input savefile logfile chunkSize learningRate 
                                 Just p -> return p
                                 Nothing -> error "Model mismatch"
                               Nothing -> sampleIO modelInit
+
+            print (natVal start_params)
 
             text <- B.readFile input
             running_average <- newIORef (newRunningAverage 0.99)
@@ -230,7 +231,7 @@ train modelSize initialParameters input savefile logfile chunkSize learningRate 
                 when (i `mod` 50 == 0) $ do
                   let (par, c0) = Blob.split p
                   msg <- sampleRNN 200 (Blob.split c0) (runrnn modelStep par)
-                  putStrLn msg
+                  putStrLn (filter (\c -> isPrint c || isSpace c) msg)
 
                 when (i `mod` 100 == 0) $ do
                   case savefile of

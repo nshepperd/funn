@@ -9,7 +9,7 @@ module AI.Funn.Network.Network (
   first, second, (>>>),
   (***),
   assocL, assocR, swap,
-  fromParams, dupLayer,
+  fromParams, addParams, dupLayer,
   fstNetwork, sndNetwork
   ) where
 
@@ -72,6 +72,13 @@ assocR = liftDiff Diff.assocR
 
 swap :: (Monad m) => Network m (a,b) (b,a)
 swap = liftDiff Diff.swap
+
+addParams :: forall m n a b. (Monad m, KnownNat n) => RVar (Blob n) -> Network m (Blob n, a) b -> Network m a b
+addParams initial (Network (p :: Proxy subn) sub_diff sub_initial) =
+  Network (Proxy @ (subn + n)) new_diff new_initial
+  where
+    new_diff = Diff.first splitDiff >>> Diff.assocR >>> sub_diff
+    new_initial = concatInit sub_initial initial
 
 fromParams :: (Monad m, KnownNat n) => RVar (Blob n) -> Network m a (Blob n, a)
 fromParams initial = Network Proxy id initial

@@ -61,7 +61,7 @@ import qualified Numeric.LinearAlgebra.HMatrix as HM
 import           AI.Funn.Common
 import           AI.Funn.Flat.Blob (Blob(..))
 import qualified AI.Funn.Flat.Blob as Blob
-import           AI.Funn.Diff.Diff (Diff(..), Additive(..), Derivable(..), (>>>))
+import           AI.Funn.Diff.Diff (Diff(..), Derivable(..), (>>>))
 import qualified AI.Funn.Diff.Diff as Diff
 import           AI.Funn.Diff.Pointed
 import           AI.Funn.Diff.RNN
@@ -270,6 +270,8 @@ main = do
             ((c', o), _) <- Diff.runDiff step' (par, (s, c))
             return (c', o)
 
+        print (natVal initialParameters)
+
         text <- B.readFile input
         running_average <- newIORef 0
         running_count <- newIORef 0
@@ -314,7 +316,7 @@ main = do
             when (i `mod` 50 == 0) $ do
               let (par, c0) = Blob.split p
               msg <- sampleRNN 200 (Blob.split c0) (runrnn par)
-              putStrLn msg
+              putStrLn (filter (\c -> isPrint c || isSpace c) msg)
 
             when (i `mod` 100 == 0) $ do
               case savefile of
