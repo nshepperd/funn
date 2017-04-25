@@ -1,8 +1,6 @@
 {-# LANGUAGE TypeFamilies, MultiParamTypeClasses, FlexibleContexts, FlexibleInstances #-}
 {-# LANGUAGE KindSignatures, DataKinds, TypeOperators #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE ForeignFunctionInterface #-}
 module AI.Funn.Flat.Blob (Blob(..), generate, split, cat,
                           fromList, toList, scale, adamBlob
                          ) where
@@ -29,17 +27,32 @@ import           System.IO.Unsafe
 
 import           AI.Funn.Common
 import           AI.Funn.SGD
-import           AI.Funn.Diff.Diff (Diff(..), Additive(..), Derivable(..))
+import           AI.Funn.Diff.Diff (Diff(..), Derivable(..))
 import qualified AI.Funn.Diff.Diff as Diff
+import           AI.Funn.Space
 
 newtype Blob (n :: Nat) = Blob { getBlob :: S.Vector Double }
                         deriving (Show, Read)
 
-instance (Applicative m, KnownNat n) => Additive m (Blob n) where
-  plus (Blob a) (Blob b) = pure (Blob (a + b))
+instance (Applicative m, KnownNat n) => Zero m (Blob n) where
   zero = pure (Blob (V.replicate n 0))
     where n = natInt (Proxy :: Proxy n)
-  plusm blobs = pure (sumBlobs (F.toList blobs))
+
+instance (Applicative m, KnownNat n) => Semi m (Blob n) where
+  plus (Blob a) (Blob b) = pure $ Blob (a + b)
+
+instance (Applicative m, KnownNat n) => Additive m (Blob n) where
+  plusm blobs = pure $ sumBlobs (F.toList blobs)
+
+instance (Applicative m, KnownNat n) => Scale m Double (Blob n) where
+  scale x (Blob v) = pure $ Blob (V.map (x*) v)
+
+instance (Applicative m, KnownNat n) => VectorSpace m Double (Blob n) where
+  {}
+
+instance (Applicative m, KnownNat n) => Inner m Double (Blob n) where
+  inner (Blob u) (Blob v) = pure (u HM.<.> v)
+
 
 instance Derivable (Blob n) where
   type D (Blob n) = Blob n
@@ -51,9 +64,6 @@ instance CheckNAN (Blob n) where
   check s (Blob xs) b = check s xs b
 
 -- Functions --
-
-scale :: Double -> Blob n -> Blob n
-scale a (Blob xs) = Blob (HM.scale a xs)
 
 generate :: forall f n. (Applicative f, KnownNat n) => f Double -> f (Blob n)
 generate f = Blob . V.fromList <$> sequenceA (replicate n f)
@@ -110,7 +120,7 @@ sumBlobs xs = Blob $ unsafePerformIO go
 adamBlob :: forall m (n :: Nat). (Monad m, KnownNat n) => AdamConfig m (Blob n) (Blob n)
 adamBlob = defaultAdam {
   adam_pure_d = \x -> generate (pure x),
-  adam_scale_d = \x b -> pure (scale x b),
+  adam_scale_d = \x b -> scale x b,
   adam_add_d = plus,
   adam_square_d = \(Blob b) -> pure $ Blob (V.map (^2) b),
   adam_sqrt_d = \(Blob b) -> pure $ Blob (V.map sqrt b),

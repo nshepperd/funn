@@ -70,6 +70,7 @@ import           AI.Funn.Flat.LSTM
 import           AI.Funn.Flat.Mixing
 import           AI.Funn.SGD
 import           AI.Funn.SomeNat
+import           AI.Funn.Space
 
 sampleIO :: MonadIO m => RVar a -> m a
 sampleIO v = liftIO (runRVar v StdRandom)
@@ -96,7 +97,7 @@ checkGradient network = do input <- sampleIO (Blob.generate $ uniform 0 1)
                            (e, k) <- runDiff network input
                            d_input <- k 1
                            perturb <- sampleIO (Blob.generate $ uniform (-ε) ε)
-                           let input' = input Diff.## perturb
+                           input' <- input `plus` perturb
                            (e', _) <- runDiff network input'
                            let δ_gradient = V.sum (V.zipWith (*) (getBlob d_input) (getBlob perturb))
                                δ_finite = e' - e
@@ -131,12 +132,17 @@ data Commands = Train (Maybe FilePath) FilePath (Maybe FilePath) (Maybe FilePath
               | CheckDeriv
               deriving (Show)
 
-instance (Additive m a, Monad m) => Additive m (Vector a) where
+instance (Additive m a, Applicative m) => Zero m (Vector a) where
   zero = pure V.empty
+
+instance (Additive m a, Monad m) => Semi m (Vector a) where
   plus xs ys
     | V.null xs = pure ys
     | V.null ys = pure xs
     | otherwise = V.zipWithM plus xs ys
+
+instance (Additive m a, Monad m) => Additive m (Vector a) where
+  {}
 
 data ParBox where
   ParBox :: KnownNat n => Blob n -> ParBox

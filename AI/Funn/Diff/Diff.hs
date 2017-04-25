@@ -1,12 +1,14 @@
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE FlexibleContexts, FlexibleInstances #-}
 {-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE DefaultSignatures #-}
-{-# LANGUAGE TypeFamilies, MultiParamTypeClasses, FlexibleContexts, FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeFamilies #-}
 module AI.Funn.Diff.Diff (
   Additive(..), (##), unit,
   Derivable(..),
   Diff(..),
   runDiff_, runDiffForward,
+  runDiffD,
   first, second, (>>>),
   assocL, assocR, swap,
   fst, snd, dup
@@ -22,6 +24,8 @@ import           Data.Functor.Identity
 import           Data.Vector (Vector)
 import qualified Data.Vector.Generic as V
 
+import AI.Funn.Space
+
 class Derivable a where
   type family D a :: *
 
@@ -29,20 +33,6 @@ class Derivable a where
 newtype Diff m a b = Diff {
   runDiff :: a -> m (b, D b -> m (D a))
   }
-
-class Additive m a where
-  plus :: a -> a -> m a
-  zero :: m a
-  plusm :: (Foldable f) => f a -> m a
-  default plusm :: (Monad m, Foldable f) => f a -> m a
-  plusm xs = do z <- zero
-                foldrM plus z xs
-
-(##) :: (Additive Identity a) => a -> a -> a
-x ## y = runIdentity (plus x y)
-
-unit :: (Additive Identity a) => a
-unit = runIdentity zero
 
 instance Derivable Double where
   type D Double = Double
@@ -62,27 +52,7 @@ instance (Derivable a, Derivable b, Derivable c) => Derivable (a, b, c) where
 instance Derivable a => Derivable (Vector a) where
   type D (Vector a) = Vector (D a)
 
-instance (Applicative m) => Additive m () where
-  plus _ _ = pure ()
-  zero = pure ()
-  plusm _ = pure ()
-
-instance (Applicative m, Additive m a, Additive m b) => Additive m (a, b) where
-  plus (a1, b1) (a2, b2) = liftA2 (,) (plus a1 a2) (plus b1 b2)
-  zero = liftA2 (,) zero zero
-  plusm abs = let (as, bs) = unzip (toList abs)
-              in liftA2 (,) (plusm as) (plusm bs)
-
-instance (Applicative m, Additive m a, Additive m b, Additive m c) => Additive m (a, b, c) where
-  plus (a1, b1, c1) (a2, b2, c2) = liftA3 (,,) (plus a1 a2) (plus b1 b2) (plus c1 c2)
-  zero = liftA3 (,,) zero zero zero
-  plusm abs = let (as, bs, cs) = unzip3 (toList abs)
-              in liftA3 (,,) (plusm as) (plusm bs) (plusm cs)
-
-instance (Applicative m) => Additive m Double where
-  plus a b = pure (a + b)
-  zero = pure 0
-  plusm xs = pure (sum xs)
+type DiffV m a = (Derivable a, Additive m (D a))
 
 runDiff_ :: Diff Identity a b -> a -> (b, D b -> D a)
 runDiff_ (Diff f) a = let (b, dba) = runIdentity (f a) in
@@ -91,6 +61,11 @@ runDiff_ (Diff f) a = let (b, dba) = runIdentity (f a) in
 runDiffForward :: Monad m => Diff m a b -> a -> m b
 runDiffForward d a = do (b, _) <- runDiff d a
                         return b
+
+runDiffD :: Monad m => Diff m a b -> a -> D b -> m (b, D a)
+runDiffD diff a db = do (b, k) <- runDiff diff a
+                        da <- k db
+                        return (b, da)
 
 diff_id :: (Applicative m) => Diff m a a
 diff_id = Diff (\a -> pure (a, \db -> pure db))
@@ -141,19 +116,19 @@ swap = Diff run
   where
     run (a,b) = pure ((b,a), \(db,da) -> pure (da,db))
 
-fst :: (Applicative m, Additive m (D b)) => Diff m (a,b) a
+fst :: (Applicative m, Zero m (D b)) => Diff m (a,b) a
 fst = Diff run
   where
     run (a,_) = let back da = fmap ((,) da) zero
                 in pure (a, back)
 
-snd :: (Applicative m, Additive m (D a)) => Diff m (a,b) b
+snd :: (Applicative m, Zero m (D a)) => Diff m (a,b) b
 snd = Diff run
   where
     run (_,b) = let back db = fmap (\da -> (da, db)) zero
                 in pure (b, back)
 
-dup :: (Applicative m, Additive m (D a)) => Diff m a (a,a)
+dup :: (Applicative m, Semi m (D a)) => Diff m a (a,a)
 dup = Diff run
   where
     run a = pure ((a,a), backward)

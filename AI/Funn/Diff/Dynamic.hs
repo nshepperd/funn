@@ -14,7 +14,8 @@ import           Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IntMap
 
 import           Unsafe.Coerce
-import           AI.Funn.Diff.Diff (Additive(..), Derivable(..))
+import           AI.Funn.Diff.Diff (Derivable(..))
+import           AI.Funn.Space
 
 newtype Ref s a = Ref { getRef :: Int }
 

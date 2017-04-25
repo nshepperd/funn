@@ -27,11 +27,12 @@ import           Foreign.Ptr
 import           System.IO.Unsafe
 
 import           AI.Funn.Common
-import           AI.Funn.SGD
 import           AI.Funn.Diff.Diff (Diff(..), Additive(..), Derivable(..))
 import qualified AI.Funn.Diff.Diff as Diff
 import           AI.Funn.Flat.Blob (Blob(..))
 import qualified AI.Funn.Flat.Blob as Blob
+import           AI.Funn.SGD
+import           AI.Funn.Space
 
 -- Diff --
 
@@ -130,8 +131,9 @@ quadraticCost = Diff run
   where
     run (Blob !o, Blob !target)
       = let diff = V.zipWith (-) o target
-            backward dcost = return ((Blob.scale dcost (Blob diff),
-                                      Blob.scale dcost (Blob (V.map negate diff))))
+            backward dcost = do one <- scale dcost (Blob diff)
+                                two <- scale (-1) one
+                                return (one, two)
         in return (0.5 * ssq diff, backward)
 
     ssq :: HM.Vector Double -> Double
@@ -169,7 +171,7 @@ flat_outer u v = unsafePerformIO go
 adamBlob :: forall m (n :: Nat). (Monad m, KnownNat n) => AdamConfig m (Blob n) (Blob n)
 adamBlob = defaultAdam {
   adam_pure_d = \x -> Blob.generate (pure x),
-  adam_scale_d = \x b -> pure (Blob.scale x b),
+  adam_scale_d = \x b -> scale x b,
   adam_add_d = plus,
   adam_square_d = \(Blob b) -> pure $ Blob (V.map (^2) b),
   adam_sqrt_d = \(Blob b) -> pure $ Blob (V.map sqrt b),
