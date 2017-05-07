@@ -29,7 +29,7 @@ import           System.IO.Unsafe
 import           AI.Funn.Common
 import           AI.Funn.Diff.Diff (Diff(..), Additive(..), Derivable(..))
 import qualified AI.Funn.Diff.Diff as Diff
-import           AI.Funn.Flat.Blob (Blob(..))
+import           AI.Funn.Flat.Blob (Blob(..), blob, getBlob)
 import qualified AI.Funn.Flat.Blob as Blob
 import           AI.Funn.SGD
 import           AI.Funn.Space
@@ -39,23 +39,29 @@ import           AI.Funn.Space
 sumDiff :: forall n m. (Monad m, KnownNat n) => Diff m (Blob n) (Double)
 sumDiff = Diff run
   where
-    run (Blob !xs) = return (V.sum xs, backward)
+    run xs = return (V.sum (getBlob xs), backward)
     n = natInt (Proxy :: Proxy n)
-    backward δ = return (Blob (V.replicate n δ))
+    backward δ = return (blob (V.replicate n δ))
 
 fcDiff :: forall x y m. (Monad m, KnownNat x, KnownNat y) => Diff m (Blob (x*y + y), Blob x) (Blob y)
 fcDiff = Diff run
   where
-    run (Blob ps, Blob xs) =
-      let ws = HM.reshape x (V.slice 0 (x*y) ps)
+    run (bps, bxs) =
+      let ps = getBlob bps
+          xs = getBlob bxs
+          ws = HM.reshape x (V.slice 0 (x*y) ps)
           bs = V.slice (x*y) y ps
           ys = (ws HM.#> xs) + bs
-          backward (Blob δs) =
-            let dxs = Blob $ HM.tr ws HM.#> δs
-                dws = (δs `flat_outer` xs)
-                dbs = δs
-            in return (Blob (dws <> dbs), dxs)
-      in return (Blob ys, backward)
+      in return (blob ys, backward ws xs)
+
+    backward ws xs bδs =
+      let δs = getBlob bδs
+          dxs = blob $ HM.tr ws HM.#> δs
+          dws = (δs `flat_outer` xs)
+          dbs = δs
+      in return (blob (dws <> dbs), dxs)
+
+
     x = natInt (Proxy :: Proxy x)
     y = natInt (Proxy :: Proxy y)
 
@@ -66,33 +72,37 @@ prelu' α x = if x > 0 then 1 else α
 preluDiff :: forall n m. (Monad m, KnownNat n) => Diff m (Blob 1, Blob n) (Blob n)
 preluDiff = Diff run
   where
-    run (Blob p, Blob !xs) =
-      let α = V.head p
-          output = V.map (prelu α) xs
-          backward (Blob !δ) = let dx = V.zipWith (*) δ (V.map (prelu' α) xs)
-                                   dα = V.sum $ V.zipWith (*) δ (V.map (min 0) xs)
-                               in return (Blob.fromList [dα], Blob dx)
-      in return (Blob output, backward)
+    run (p, xs) =
+      let α = V.head (getBlob p)
+          output = Blob.mapBlob (prelu α) xs
+      in return (output, backward α xs)
+
+    backward α xs δ =
+      let dx = V.zipWith (*) (V.map (prelu' α) (getBlob xs)) (getBlob δ)
+          dα = V.sum $ V.zipWith (*) (V.map (min 0) (getBlob xs)) (getBlob δ)
+      in return (Blob.fromList [dα], blob dx)
 
 reluDiff :: forall n m. (Monad m, KnownNat n) => Diff m (Blob n) (Blob n)
 reluDiff = Diff run
   where
-    run (Blob !xs) =
-      let α = 0
-          output = V.map (prelu α) xs
-          backward (Blob !δ) = let dx = V.zipWith (*) δ (V.map (prelu' α) xs)
-                               in return (Blob dx)
-      in return (Blob output, backward)
+    run xs =
+      let output = V.map (prelu 0) (getBlob xs)
+      in return (blob output, backward xs)
+
+    backward xs δ =
+      let dx = V.zipWith (*) (V.map (prelu' 0) (getBlob xs)) (getBlob δ)
+      in return (blob dx)
 
 sigmoidDiff :: forall n m. (Monad m, KnownNat n) => Diff m (Blob n) (Blob n)
 sigmoidDiff = Diff run
   where
-    run (Blob !input) =
-          let output = V.map σ input
-              backward (Blob !δs) =
-                let di = V.zipWith (\y δ -> y * (1 - y) * δ) output δs
-                in return (Blob di)
-          in return (Blob output, backward)
+    run input =
+      let output = V.map σ (getBlob input)
+      in return (blob output, backward output)
+
+    backward output δs =
+      let di = V.zipWith (\y δ -> y * (1 - y) * δ) output (getBlob δs)
+      in return (blob di)
 
     σ x = if x < 0 then
             exp x / (1 + exp x)
@@ -103,12 +113,12 @@ sigmoidDiff = Diff run
 tanhDiff :: forall n m. (Monad m, KnownNat n) => Diff m (Blob n) (Blob n)
 tanhDiff = Diff run
   where
-    run (Blob !input) =
-          let output = V.map tanh input
-              backward (Blob !δs) =
-                let di = V.zipWith (\y δ -> tanh' y * δ) output δs
-                in return (Blob di)
-          in return (Blob output, backward)
+    run input =
+          let output = V.map tanh (getBlob input)
+              backward δs =
+                let di = V.zipWith (\y δ -> tanh' y * δ) output (getBlob δs)
+                in return (blob di)
+          in return (blob output, backward)
 
     tanh x = (exp x - exp (-x)) / (exp x + exp (-x))
     tanh' y = 1 - y^2
@@ -129,23 +139,27 @@ splitDiff = Diff run
 quadraticCost :: (Monad m, KnownNat n) => Diff m (Blob n, Blob n) Double
 quadraticCost = Diff run
   where
-    run (Blob !o, Blob !target)
-      = let diff = V.zipWith (-) o target
-            backward dcost = do one <- scale dcost (Blob diff)
-                                two <- scale (-1) one
-                                return (one, two)
-        in return (0.5 * ssq diff, backward)
+    run (o, target)
+      = let os = getBlob o
+            ts = getBlob target
+            diff = V.zipWith (-) os ts
+        in return (0.5 * ssq diff, backward diff)
+
+    backward diff d = do one <- scale d (blob diff)
+                         two <- scale (-1) one
+                         return (one, two)
 
     ssq :: HM.Vector Double -> Double
     ssq xs = V.sum $ V.map (\x -> x*x) xs
 
 softmaxCost :: (Monad m, KnownNat n) => Diff m (Blob n, Int) Double
 softmaxCost = Diff run
-  where run (Blob !o, !target)
-          = let ltotal = log (V.sum . V.map exp $ o)
+  where run (bo, !target)
+          = let o = getBlob bo
+                ltotal = log (V.sum . V.map exp $ o)
                 cost = (-(o V.! target) + ltotal)
                 backward dcost = let back = V.imap (\j x -> exp(x - ltotal) - if target == j then dcost else 0) o
-                                 in return (Blob back, ())
+                                 in return (blob back, ())
             in return (cost, backward)
 
 -- Special --
@@ -167,16 +181,3 @@ flat_outer u v = unsafePerformIO go
             V.unsafeFreeze target
     n = V.length u
     m = V.length v
-
-adamBlob :: forall m (n :: Nat). (Monad m, KnownNat n) => AdamConfig m (Blob n) (Blob n)
-adamBlob = defaultAdam {
-  adam_pure_d = \x -> Blob.generate (pure x),
-  adam_scale_d = \x b -> scale x b,
-  adam_add_d = plus,
-  adam_square_d = \(Blob b) -> pure $ Blob (V.map (^2) b),
-  adam_sqrt_d = \(Blob b) -> pure $ Blob (V.map sqrt b),
-  adam_divide_d = \(Blob x) (Blob y) -> pure $ Blob (V.zipWith (/) x y),
-  adam_update_p = plus
-  }
-  where
-    n = fromIntegral (natVal (Proxy :: Proxy n))

@@ -23,7 +23,7 @@ import           Foreign.Ptr
 import           System.IO.Unsafe
 
 import           AI.Funn.Diff.Diff (Derivable(..), Additive(..), Diff(..))
-import           AI.Funn.Flat.Blob (Blob(..))
+import           AI.Funn.Flat.Blob (Blob(..), blob, getBlob)
 import qualified AI.Funn.Flat.Blob as Blob
 
 foreign import ccall "lstm_forward" lstmForwardFFI :: CInt -> Ptr Double -> Ptr Double -> Ptr Double -> Ptr Double -> Ptr Double -> Ptr Double -> IO ()
@@ -76,8 +76,8 @@ lstmDiff = Diff run
                                    (getBlob inputs))
           backward (dh, dy) = let (d_ws, d_hs, d_xs) = (lstmBackward n (getBlob par)
                                                         store (getBlob dh) (getBlob dy))
-                              in return (Blob d_ws, (Blob d_hs, Blob d_xs))
-      in return ((Blob new_h, Blob new_y), backward)
+                              in return (blob d_ws, (blob d_hs, blob d_xs))
+      in return ((blob new_h, blob new_y), backward)
 
     n :: Int
     n = fromIntegral (natVal (Proxy :: Proxy n))

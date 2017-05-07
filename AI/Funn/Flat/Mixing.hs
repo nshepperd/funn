@@ -39,7 +39,7 @@ import           AI.Funn.Common
 import           AI.Funn.Flat.Flat
 import           AI.Funn.Diff.Diff
 import           AI.Funn.NatLog
-import           AI.Funn.Flat.Blob (Blob(..))
+import           AI.Funn.Flat.Blob (Blob(..), blob, getBlob)
 import qualified AI.Funn.Flat.Blob as Blob
 import           AI.Funn.Space
 
@@ -115,14 +115,14 @@ mixDiff :: forall proxy s d m. (Monad m, KnownNat s, KnownNat d) =>
            proxy s -> Diff m (Blob (s * (2^d) * d), Blob (2^d)) (Blob (2^d))
 mixDiff proxy = Diff run
   where
-    run (!pars, !input) = return (Blob res, backward)
+    run (!pars, !input) = return (blob res, backward)
       where
         par_pieces = V.generate d (\level -> V.slice (level * s * n) (s * n) (getBlob pars))
         (inputs, res) = State.runState (traverse go_forward (V.zip par_pieces table)) (getBlob input)
         backward !delta =
           let (deltas, di) = State.runState (traverseBack go_backward (V.zip par_pieces table)) (getBlob delta)
               dps = V.zipWith3 go_params table inputs deltas
-          in return (Blob (fold dps), Blob di)
+          in return (blob (fold dps), blob di)
 
     s,d,n :: Int
     s = fromIntegral (natVal (Proxy :: Proxy s))
@@ -158,7 +158,7 @@ mixDiff proxy = Diff run
         fold [[i, i `xor` f bit] | bit <- [0..s-1]]
 
 resizeBlob :: forall a b. (KnownNat b) => Blob a -> Blob b
-resizeBlob (Blob xs) = Blob (resize (fromIntegral b) xs)
+resizeBlob xs = blob (resize (fromIntegral b) (getBlob xs))
   where
     b = natVal (Proxy :: Proxy b)
 

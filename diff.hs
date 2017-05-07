@@ -59,7 +59,7 @@ import qualified Data.Vector.Storable.Mutable as M
 import qualified Numeric.LinearAlgebra.HMatrix as HM
 
 import           AI.Funn.Common
-import           AI.Funn.Flat.Blob (Blob(..))
+import           AI.Funn.Flat.Blob (Blob(..), blob, getBlob)
 import qualified AI.Funn.Flat.Blob as Blob
 import           AI.Funn.Diff.Diff (Diff(..), Derivable(..), (>>>))
 import qualified AI.Funn.Diff.Diff as Diff
@@ -148,8 +148,8 @@ data ParBox where
   ParBox :: KnownNat n => Blob n -> ParBox
 
 instance LB.Binary (Blob n) where
-  put (Blob xs) = putVector putDouble xs
-  get = Blob <$> getVector getDouble
+  put xs = putVector putDouble (getBlob xs)
+  get = blob <$> getVector getDouble
 
 instance LB.Binary ParBox where
   put (ParBox (b :: Blob n)) = do

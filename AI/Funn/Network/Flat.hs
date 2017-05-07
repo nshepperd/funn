@@ -29,7 +29,7 @@ import           AI.Funn.Network.Network
 import           AI.Funn.Diff.Diff (Diff(..), Additive(..), Derivable(..))
 import qualified AI.Funn.Diff.Diff as Diff
 import qualified AI.Funn.Flat.Flat as Flat
-import           AI.Funn.Flat.Blob (Blob(..))
+import           AI.Funn.Flat.Blob (Blob(..), blob, getBlob)
 import qualified AI.Funn.Flat.Blob as Blob
 
 -- Diff --
@@ -45,7 +45,7 @@ fcLayer = Network Proxy Flat.fcDiff initial
                  let (u,_,v) = HM.thinSVD (HM.reshape from ws)
                      m = HM.flatten (u <> HM.tr v) -- orthogonal initialisation
                  bs <- V.replicateM to (pure 0)
-                 return $ Blob (m <> bs)
+                 return $ blob (m <> bs)
     from = fromIntegral $ natVal (Proxy @ x)
     to = fromIntegral $ natVal (Proxy @ y)
 
