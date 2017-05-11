@@ -103,3 +103,16 @@ instance (Applicative m, Semi m a, Semi m b, Semi m c) => Semi m (a, b, c) where
 instance (Applicative m, Additive m a, Additive m b, Additive m c) => Additive m (a, b, c) where
   plusm abs = let (as, bs, cs) = unzip3 (toList abs)
               in liftA3 (,,) (plusm as) (plusm bs) (plusm cs)
+
+
+instance (Applicative m, Scale m x a, Scale m x b, Scale m x c) => Scale m x (a,b,c) where
+  scale x (a,b,c) = (,,) <$> scale x a <*> scale x b <*> scale x c
+
+instance (Applicative m, VectorSpace m x a, VectorSpace m x b, VectorSpace m x c) => VectorSpace m x (a,b,c) where
+  {}
+
+instance (Applicative m, Num x, Inner m x a, Inner m x b, Inner m x c) => Inner m x (a,b,c) where
+  inner (a1, b1, c1) (a2, b2, c2) = (\x y z -> x + y + z)
+                                    <$> inner a1 a2
+                                    <*> inner b1 b2
+                                    <*> inner c1 c2
