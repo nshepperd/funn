@@ -25,7 +25,7 @@ data Buffer s a = Buffer !(Mem s a) !Int !Int
 -- 0-size buffers, we do so here, by allocating with
 -- max(1, <buffer size>).
 
-malloc :: Storable a => Int -> OpenCL s (Buffer s a)
+malloc :: (MonadCL s m, Storable a) => Int -> m (Buffer s a)
 malloc n = do mem <- Mem.malloc (max 1 n)
               return (Buffer mem 0 n)
 
@@ -35,13 +35,13 @@ free (Buffer mem _ _) = Mem.free mem
 arg :: Buffer s a -> KernelArg s
 arg (Buffer mem offset size) = Mem.arg mem <> int32Arg offset
 
-fromList :: Storable a => [a] -> OpenCL s (Buffer s a)
+fromList :: (MonadCL s m, Storable a) => [a] -> m (Buffer s a)
 fromList [] = malloc 0
 fromList xs = do mem <- Mem.fromList xs
                  return (Buffer mem 0 (length xs))
 
 -- Inefficient!
-toList :: (Storable a) => Buffer s a -> OpenCL s [a]
+toList :: (MonadCL s m, Storable a) => Buffer s a -> m [a]
 toList (Buffer mem offset size) = do xs <- Mem.toList mem
                                      return (take size $ drop offset $ xs)
 
@@ -53,6 +53,6 @@ slice offset size (Buffer mem _off _size)
                                     ++ show size ++ " > "
                                     ++ show _size)
 
-concat :: Storable a => [Buffer s a] -> OpenCL s (Buffer s a)
+concat :: (MonadCL s m, Storable a) => [Buffer s a] -> m (Buffer s a)
 concat xs = do values <- traverse toList xs
                fromList (fold values)

@@ -24,10 +24,10 @@ class (Zero m a, Semi m a) => Additive m a where
   plusm xs = do z <- zero
                 foldrM plus z xs
 
-class (Additive m a, Scale m x a) => VectorSpace m x a where
+class (Additive m a, Scale m x a) => VectorSpace m x a | a -> x where
   {}
 
-class (VectorSpace m x a) => Inner m x a where
+class (VectorSpace m x a) => Inner m x a | a -> x where
   inner :: a -> a -> m x
 
 (##) :: (Semi Identity a) => a -> a -> a

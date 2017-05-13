@@ -7,3 +7,6 @@ LIBS += Util.o
 
 : pure.o | $(LIBS) |> !ghc $(LIBS) |> %B
 : pure |> ./%f |>
+
+: opencl.o | $(LIBS) |> !ghc $(LIBS) |> %B
+: opencl |> ./%f |>

@@ -43,19 +43,19 @@ instance Derivable (Blob s n) where
 freeBlob :: Blob s n -> OpenCL s ()
 freeBlob (Blob mem) = Buffer.free mem
 
-createBlob :: forall n s. (KnownNat n) => OpenCL s (Blob s n)
+createBlob :: forall n m s. (MonadCL s m, KnownNat n) => m (Blob s n)
 createBlob = Blob <$> Buffer.malloc (fromIntegral n)
   where
     n = natVal (Proxy :: Proxy n)
 
-fromList :: forall n s. (KnownNat n) => [Double] -> OpenCL s (Blob s n)
+fromList :: forall n m s. (MonadCL s m, KnownNat n) => [Double] -> m (Blob s n)
 fromList xs = do when (n /= genericLength xs) $ liftIO $ do
                    throwIO (IndexOutOfBounds "Blob.fromList")
                  Blob <$> Buffer.fromList (map double2Float xs)
   where
     n = natVal (Proxy :: Proxy n)
 
-toList :: Blob s n -> OpenCL s [Double]
+toList :: (MonadCL s m) => Blob s n -> m [Double]
 toList (Blob mem) = map float2Double <$> Buffer.toList mem
 
 blobArg :: Blob s n -> KernelArg s

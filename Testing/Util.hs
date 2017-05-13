@@ -3,6 +3,7 @@
 module Testing.Util where
 
 import Control.Category ((>>>))
+import Control.Monad
 import Control.Monad.Trans
 import Data.Functor.Identity
 import GHC.TypeLits
@@ -57,8 +58,9 @@ checkGradient :: (Monad m,
                   Inner m Double b, D b ~ b,
                   Arbitrary a, Arbitrary b,
                   Show a, Show b)
-              => (m Property -> Property) -> Diff m a b -> Property
-checkGradient eval diff = monadic eval $ do
+              => Double -> Double -> Double
+              -> (m Property -> Property) -> Diff m a b -> Property
+checkGradient min_precision wiggle ε eval diff = monadic eval $ do
   -- Reduce to (a -> Double)
   xb <- pick arbitrary
   let new_diff = diff >>> linear xb
@@ -69,18 +71,19 @@ checkGradient eval diff = monadic eval $ do
   -- Precondition: exclude very small δL which imply catastrophic
   -- cancellation in l - l' and not necessarily any problem with the
   -- calculations.
-  pre (abs (delta_finite stats) * 1e10 > abs (cost stats))
+  pre (abs (delta_finite stats) * min_precision > abs (cost stats))
+  let success = (diff_delta stats <= mean_delta stats * wiggle)
+  when (not success) $
+    monitor (counterexample $ show stats)
   -- Assert: finite gradient ~ backprop gradient.
-  assert (diff_delta stats <= mean_delta stats * 0.01)
-    where
-      ε = 0.00001
+  assert success
 
 checkGradientI :: (Inner Identity Double a, D a ~ a,
                    Inner Identity Double b, D b ~ b,
                    Arbitrary a, Arbitrary b,
                    Show a, Show b)
                => Diff Identity a b -> Property
-checkGradientI = checkGradient runIdentity
+checkGradientI = checkGradient 1e8 0.01 0.00001 runIdentity
 
 putR :: Applicative m => b -> Diff m a (a, b)
 putR b = Diff run

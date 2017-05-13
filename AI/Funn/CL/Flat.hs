@@ -97,27 +97,33 @@ quadraticCost = Diff run
       dy <- scaleBlob (-δ) ds
       return (dx, dy)
 
-fcDiff :: forall m n s. (KnownNat m, KnownNat n) =>
-          Diff (OpenCL s) (Blob s (m * n + n), Blob s m) (Blob s n)
+fcDiff :: forall α β m s. (MonadCL s m, KnownNat α, KnownNat β) =>
+          Diff m (Blob s (α * β + β), Blob s α) (Blob s β)
 fcDiff = Diff run
   where
     run (pars, xs) = do
       ys <- createBlob
       (runKernel kSOURCE "fcdiff"
-       [int32Arg m, int32Arg n, blobArg pars, blobArg xs, blobArg ys]
-       [] [n] [1])
+       [int32Arg α, int32Arg β, blobArg pars, blobArg xs, blobArg ys]
+       [] [β] [1])
       return (ys, backward pars xs)
 
-    backward :: Blob s (m * n + n) -> Blob s m -> Blob s n ->
-                OpenCL s (Blob s (m * n + n), Blob s m)
+    backward :: Blob s (α * β + β) -> Blob s α -> Blob s β ->
+                m (Blob s (α * β + β), Blob s α)
     backward pars xs dys = do
       dpars <- createBlob
       dxs <- createBlob
-      let (dws :: Blob s (m * n), dbs :: Blob s n) = splitBlob dpars
+      let (dws :: Blob s (α * β), dbs :: Blob s β) = splitBlob dpars
       (runKernel kSOURCE "fcdiff_dws"
-       [int32Arg m, int32Arg n, blobArg xs, blobArg dys, blobArg dws]
-       [] [m, n] [1, 1])
+       [int32Arg α, int32Arg β, blobArg xs, blobArg dys, blobArg dws]
+       [] [α, β] [1, 1])
+      (runKernel kSOURCE "fcdiff_dxs"
+       [int32Arg α, int32Arg β, blobArg pars, blobArg dys, blobArg dxs]
+       [] [α] [1])
+      (runKernel kSOURCE "fcdiff_dbs"
+       [blobArg dys, blobArg dbs]
+       [] [β] [1])
       return (dpars, dxs)
 
-    m = fromIntegral $ natVal (Proxy :: Proxy m)
-    n = fromIntegral $ natVal (Proxy :: Proxy n)
+    α = fromIntegral $ natVal (Proxy :: Proxy α)
+    β = fromIntegral $ natVal (Proxy :: Proxy β)

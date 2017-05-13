@@ -27,7 +27,7 @@ foreign import ccall "&clmem_free" clmem_free :: FunPtr (Ptr CMem -> IO ())
 foreign import ccall "clmem_increase" clmem_increase :: Int64 -> IO ()
 foreign import ccall "clmem_count" clmem_count :: IO Int64
 
-malloc :: Storable a => Int -> OpenCL s (Mem s a)
+malloc :: (MonadCL s m, Storable a) => Int -> m (Mem s a)
 malloc n = do ctx <- getContext
               fromAlloc (CL.mallocArray ctx [] n)
 
@@ -39,11 +39,11 @@ arg mem = KernelArg run
   where
     run k = withMem mem (k . pure . CL.MObjArg)
 
-fromList :: Storable a => [a] -> OpenCL s (Mem s a)
+fromList :: (MonadCL s m, Storable a) => [a] -> m (Mem s a)
 fromList xs = do ctx <- getContext
                  fromAlloc (CL.newListArray ctx xs)
 
-toList :: forall a s. (Storable a) => Mem s a -> OpenCL s [a]
+toList :: forall a m s. (MonadCL s m, Storable a) => Mem s a -> m [a]
 toList mem = do queue <- getCommandQueue
                 liftIO $ tryAllocation $ withMem mem $ \memobj -> do
                   n <- (`div` elemSize) . fromIntegral <$> CL.memobjSize memobj
@@ -54,7 +54,7 @@ toList mem = do queue <- getCommandQueue
 
 -- Utility functions --
 
-fromAlloc :: IO (CL.MemObject a) -> OpenCL s (Mem s a)
+fromAlloc :: MonadCL s m => IO (CL.MemObject a) -> m (Mem s a)
 fromAlloc alloc = liftIO $ do memobj <- tryAllocation alloc
                               size <- CL.memobjSize memobj
                               clmem_increase (fromIntegral size)
