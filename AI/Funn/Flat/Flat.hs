@@ -15,6 +15,7 @@ import           Data.Traversable
 import           Data.Monoid
 import           Data.Proxy
 import           Data.Random
+import           GHC.Float
 
 import           Control.DeepSeq
 import qualified Data.Vector.Generic as V
@@ -155,13 +156,22 @@ quadraticCost = Diff run
 softmaxCost :: (Monad m, KnownNat n) => Diff m (Blob n, Int) Double
 softmaxCost = Diff run
   where run (bo, !target)
-          = let o = getBlob bo
-                ltotal = log (V.sum . V.map exp $ o)
-                cost = (-(o V.! target) + ltotal)
-                backward dcost = let back = V.imap (\j x -> exp(x - ltotal) - if target == j then dcost else 0) o
-                                 in return (blob back, ())
-            in return (cost, backward)
+          = let os = getBlob bo
+                xt = os V.! target
+                exp_total_minus_xt = V.imap (\j x -> if j /= target then exp (x - xt) else 0) os
+                log_total_minus_xt = log1p (V.sum exp_total_minus_xt)
+                cost = log_total_minus_xt
+            in return (cost, backward target os)
 
+        backward target os dcost =
+          let
+            total_but_target = V.sum (V.imap (\i x -> if i /= target then exp x else 0) os)
+            total = V.sum (V.map exp os)
+            back = V.imap (\j x -> dcost * (if target == j then
+                                              -total_but_target / total
+                                             else
+                                               exp x / total)) os
+          in return (blob back, ())
 -- Special --
 
 natInt :: (KnownNat n) => proxy n -> Int
