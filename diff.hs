@@ -1,6 +1,5 @@
 {-# LANGUAGE TypeFamilies, KindSignatures, DataKinds, TypeOperators #-}
 {-# LANGUAGE ScopedTypeVariables, FlexibleContexts #-}
-{-# LANGUAGE BangPatterns, ForeignFunctionInterface #-}
 {-# LANGUAGE TypeApplications, PartialTypeSignatures #-}
 {-# LANGUAGE FlexibleInstances, MultiParamTypeClasses #-}
 {-# LANGUAGE GADTs #-}
@@ -35,14 +34,9 @@ import qualified Data.ByteString.Lazy as LB
 import qualified Data.ByteString.Lazy.Char8 as LC
 
 import           Control.DeepSeq
-import           Data.Coerce
-import           Data.Type.Equality
+import           Data.Type.Equality ((:~:)(..))
 import           Debug.Trace
 import           GHC.TypeLits
-
-import           Foreign.C
-import           Foreign.Ptr
-import           System.IO.Unsafe
 
 import qualified Control.Monad.State.Lazy as SL
 import           Control.Monad.IO.Class
@@ -54,13 +48,11 @@ import           System.Random
 import           Data.Vector (Vector)
 import qualified Data.Vector.Generic as V
 import qualified Data.Vector.Unboxed as U
-import qualified Data.Vector.Storable as S
-import qualified Data.Vector.Storable.Mutable as M
-import qualified Numeric.LinearAlgebra.HMatrix as HM
 
 import           AI.Funn.Common
 import           AI.Funn.Flat.Blob (Blob(..), blob, getBlob)
 import qualified AI.Funn.Flat.Blob as Blob
+import           AI.Funn.Flat.ParBox
 import           AI.Funn.Diff.Diff (Diff(..), Derivable(..), (>>>))
 import qualified AI.Funn.Diff.Diff as Diff
 import           AI.Funn.Diff.Pointed
@@ -77,35 +69,6 @@ sampleIO v = liftIO (runRVar v StdRandom)
 
 deepseqM :: (Monad m, NFData a) => a -> m ()
 deepseqM x = deepseq x (return ())
-
-average :: [Double] -> Double
-average xs = sum xs / genericLength xs
-stdev :: [Double] -> Double
-stdev xs = let m = average xs in
-            sum [(x-m)^2 | x <- xs] / (genericLength xs - 1)
-
-checkGradient' :: (KnownNat a) => Diff IO (Blob a) Double -> IO (Double, Double, Double)
-checkGradient' network = do gs <- replicateM 1000 (checkGradient network)
-                            let
-                              ls = map log gs
-                              x = average ls
-                              d = stdev ls
-                            return (exp (x - d), exp x, exp (x + d))
-
-checkGradient :: (KnownNat a) => Diff IO (Blob a) Double -> IO Double
-checkGradient network = do input <- sampleIO (Blob.generate $ uniform 0 1)
-                           (e, k) <- runDiff network input
-                           d_input <- k 1
-                           perturb <- sampleIO (Blob.generate $ uniform (-ε) ε)
-                           input' <- input `plus` perturb
-                           (e', _) <- runDiff network input'
-                           let δ_gradient = V.sum (V.zipWith (*) (getBlob d_input) (getBlob perturb))
-                               δ_finite = e' - e
-                           print (input, e, d_input)
-                           return $ abs (δ_gradient - δ_finite) / (abs δ_gradient + abs δ_finite)
-
-  where
-    ε = 0.00001
 
 unfoldM :: Monad m => Int -> m a -> m [a]
 unfoldM 0 m = return []
@@ -143,29 +106,6 @@ instance (Additive m a, Monad m) => Semi m (Vector a) where
 
 instance (Additive m a, Monad m) => Additive m (Vector a) where
   {}
-
-data ParBox where
-  ParBox :: KnownNat n => Blob n -> ParBox
-
-instance LB.Binary (Blob n) where
-  put xs = putVector putDouble (getBlob xs)
-  get = blob <$> getVector getDouble
-
-instance LB.Binary ParBox where
-  put (ParBox (b :: Blob n)) = do
-    LB.put (natVal (Proxy @ n))
-    LB.put b
-  get = do
-    n <- LB.get
-    withNat n $ \(Proxy :: Proxy n) -> do
-      (b :: Blob n) <- LB.get
-      return (ParBox b)
-
-openParBox :: forall n. KnownNat n => ParBox -> Maybe (Blob n)
-openParBox (ParBox (b :: Blob m)) =
-  case sameNat (Proxy @ n) (Proxy @ m) of
-    Just Refl -> Just b
-    Nothing -> Nothing
 
 lstm :: (Monad m, KnownNat n)
       => Ref s (Blob (2*n))

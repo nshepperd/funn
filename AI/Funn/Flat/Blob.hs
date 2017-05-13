@@ -6,24 +6,22 @@ module AI.Funn.Flat.Blob (Blob, generate, split, cat,
                           fromList, toList, scale, adamBlob,
                          ) where
 
-import           GHC.TypeLits
-
 import           Control.Applicative
+import           Control.DeepSeq
+import qualified Data.Binary as LB
 import           Data.Foldable hiding (toList)
 import qualified Data.Foldable as F
-import           Data.Traversable
 import           Data.Monoid
 import           Data.Proxy
 import           Data.Random
-
-import           Control.DeepSeq
+import           Data.Traversable
 import qualified Data.Vector.Generic as V
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as M
-import qualified Numeric.LinearAlgebra.HMatrix as HM
-
 import           Foreign.C
 import           Foreign.Ptr
+import           GHC.TypeLits
+import qualified Numeric.LinearAlgebra.HMatrix as HM
 import           System.IO.Unsafe
 
 import           AI.Funn.Common
@@ -68,6 +66,10 @@ instance Derivable (Blob n) where
 
 instance NFData (Blob n) where
   rnf (Blob v) = rnf v
+
+instance LB.Binary (Blob n) where
+  put xs = putVector putDouble (getBlob xs)
+  get = blob <$> getVector getDouble
 
 -- Functions --
 

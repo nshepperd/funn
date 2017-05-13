@@ -5,61 +5,54 @@
 {-# LANGUAGE FlexibleInstances, MultiParamTypeClasses #-}
 {-# LANGUAGE GADTs #-}
 module Main where
+
 import           Control.Applicative
 import           Control.Monad
+import           Control.Monad.IO.Class
+import qualified Control.Monad.State.Lazy as SL
 import           Control.Category
-import           Data.Foldable
-import           Data.Monoid
-import           Data.Traversable
-
-import           Data.Char
-import           Data.IORef
-import           Data.List
-import           Data.Maybe
-import           Data.Proxy
-import           Data.Word
-
 import           Control.Concurrent
-import           System.Clock
-import           System.Environment
-import           System.IO
-
-import           Options.Applicative
-
-import           Text.Printf
-
+import           Control.DeepSeq
 import qualified Data.Binary as LB
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.ByteString.Lazy.Char8 as LC
-
-import           Control.DeepSeq
-import           Data.Coerce
-import           Data.Type.Equality
-import           Debug.Trace
-import           GHC.TypeLits
-
-import           Foreign.C
-import           Foreign.Ptr
-import           System.IO.Unsafe
-
-import qualified Control.Monad.State.Lazy as SL
-import           Control.Monad.IO.Class
-import           Data.Functor.Identity
+import           Data.Char
+import           Data.Foldable
+import           Data.IORef
+import           Data.List
+import           Data.Maybe
+import           Data.Monoid
+import           Data.Proxy
 import           Data.Random
 import           Data.Random.Distribution.Categorical
-import           System.Random
-
+import           Data.Traversable
+import           Data.Type.Equality ((:~:)(..))
 import           Data.Vector (Vector)
 import qualified Data.Vector.Generic as V
 import qualified Data.Vector.Unboxed as U
-import qualified Data.Vector.Storable as S
-import qualified Data.Vector.Storable.Mutable as M
-import qualified Numeric.LinearAlgebra.HMatrix as HM
+import           Data.Word
+
+import           Debug.Trace
+
+import           Foreign.C
+import           Foreign.Ptr
+import           GHC.TypeLits
+
+import           Options.Applicative
+
+import           System.Clock
+import           System.Environment
+import           System.IO
+import           System.IO.Unsafe
+import           System.Random
+
+import           Text.Printf
 
 import           AI.Funn.Common
 import           AI.Funn.Flat.Blob (Blob, blob, getBlob)
 import qualified AI.Funn.Flat.Blob as Blob
+import           AI.Funn.Flat.ParBox
 import           AI.Funn.Diff.Diff (Diff(..), Derivable(..), (>>>))
 import qualified AI.Funn.Diff.Diff as Diff
 import           AI.Funn.Network.Network
@@ -76,12 +69,6 @@ sampleIO v = liftIO (runRVar v StdRandom)
 
 deepseqM :: (Monad m, NFData a) => a -> m ()
 deepseqM x = deepseq x (return ())
-
-average :: [Double] -> Double
-average xs = sum xs / genericLength xs
-stdev :: [Double] -> Double
-stdev xs = let m = average xs in
-            sum [(x-m)^2 | x <- xs] / (genericLength xs - 1)
 
 unfoldM :: Monad m => Int -> m a -> m [a]
 unfoldM 0 m = return []
@@ -119,29 +106,6 @@ instance (Additive m a, Monad m) => Semi m (Vector a) where
 
 instance (Additive m a, Monad m) => Additive m (Vector a) where
   {}
-
-data ParBox where
-  ParBox :: KnownNat n => Blob n -> ParBox
-
-instance LB.Binary (Blob n) where
-  put xs = putVector putDouble (getBlob xs)
-  get = blob <$> getVector getDouble
-
-instance LB.Binary ParBox where
-  put (ParBox (b :: Blob n)) = do
-    LB.put (natVal (Proxy @ n))
-    LB.put b
-  get = do
-    n <- LB.get
-    withNat n $ \(Proxy :: Proxy n) -> do
-      (b :: Blob n) <- LB.get
-      return (ParBox b)
-
-openParBox :: forall n. KnownNat n => ParBox -> Maybe (Blob n)
-openParBox (ParBox (b :: Blob m)) =
-  case sameNat (Proxy @ n) (Proxy @ m) of
-    Just Refl -> Just b
-    Nothing -> Nothing
 
 step :: (Monad m, KnownNat size) => Proxy size -> Network m ((Blob size, Blob size), Blob 128) ((Blob size, Blob size), Blob 128)
 step Proxy = assocR
