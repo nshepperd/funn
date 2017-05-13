@@ -60,6 +60,8 @@ instance (Applicative m, KnownNat n) => VectorSpace m Double (Blob n) where
 instance (Applicative m, KnownNat n) => Inner m Double (Blob n) where
   inner u v = pure (getBlob u HM.<.> getBlob v)
 
+instance Eq (Blob n) where
+  b1 == b2  =  getBlob b1 == getBlob b2
 
 instance Derivable (Blob n) where
   type D (Blob n) = Blob n

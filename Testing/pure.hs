@@ -13,7 +13,7 @@ import           Test.QuickCheck.Monadic
 
 import           AI.Funn.Diff.Diff (Diff(..), Derivable(..))
 import qualified AI.Funn.Diff.Diff as Diff
-import           AI.Funn.Flat.Blob (Blob)
+import           AI.Funn.Flat.Blob (Blob, blob, getBlob)
 import qualified AI.Funn.Flat.Blob as Blob
 import           AI.Funn.Flat.Flat
 import           AI.Funn.Flat.LSTM
@@ -21,6 +21,22 @@ import           AI.Funn.Flat.Mixing
 import           AI.Funn.Space
 
 import Testing.Util
+
+-- Basic blob properties.
+
+prop_blob_getBlob :: Property
+prop_blob_getBlob = property $ \b -> blob (getBlob b) === (b :: Blob 10)
+
+prop_blob_zero :: Property
+prop_blob_zero = property $ \b -> unit ## b === (b :: Blob 10)
+
+prop_blob_plusm :: Property
+prop_blob_plusm = property $ \a b -> runIdentity (plusm [a, b]) === (a ## b :: Blob 5)
+
+prop_blob_generate :: Property
+prop_blob_generate = property $ \b -> Blob.fromList @3 [b, b, b] === runIdentity (Blob.generate (pure b))
+
+-- Gradient checking.
 
 prop_fcdiff :: Property
 prop_fcdiff = checkGradientI (fcDiff @10 @6)
