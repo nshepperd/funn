@@ -1,0 +1,9 @@
+include_rules
+
+run $(HCC) ./*.hs
+
+LIBS = ../AI/Funn/*.o ../AI/Funn/Diff/*.o ../AI/Funn/Network/*.o ../AI/Funn/Flat/*.o ../c/*.o ../AI/Funn/CL/*.o
+LIBS += Util.o
+
+: pure.o | $(LIBS) |> !ghc $(LIBS) |> %B
+: pure |> ./%f |>
