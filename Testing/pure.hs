@@ -6,6 +6,7 @@
 import           Control.Category ((>>>))
 import           Control.Monad.Trans
 import           Data.Functor.Identity
+import           Data.Proxy
 import           GHC.TypeLits
 import           Test.QuickCheck hiding (scale)
 import           Test.QuickCheck.Monadic
@@ -15,6 +16,8 @@ import qualified AI.Funn.Diff.Diff as Diff
 import           AI.Funn.Flat.Blob (Blob)
 import qualified AI.Funn.Flat.Blob as Blob
 import           AI.Funn.Flat.Flat
+import           AI.Funn.Flat.LSTM
+import           AI.Funn.Flat.Mixing
 import           AI.Funn.Space
 
 import Testing.Util
@@ -46,6 +49,11 @@ prop_quadraticcost = checkGradientI (quadraticCost @Identity @10)
 prop_softmaxcost :: Property
 prop_softmaxcost = checkGradientI (putR 0 >>> softmaxCost @Identity @3)
 
+prop_lstmdiff :: Property
+prop_lstmdiff = checkGradientI (lstmDiff @10)
+
+prop_amixdiff :: Property
+prop_amixdiff = checkGradientI (amixDiff @3 @3 @4 Proxy)
 
 -- Make TemplateHaskell aware of above definitions.
 $(return [])
