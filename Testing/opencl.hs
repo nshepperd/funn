@@ -1,11 +1,16 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-import           Control.Category ((>>>))
+{-# LANGUAGE UndecidableInstances #-}
+import Prelude hiding (id)
+import           Control.Category ((>>>), id)
 import           Control.Monad.Trans
 import           Data.Functor.Identity
 import           Data.Proxy
@@ -36,28 +41,52 @@ clProperty clProp = ioProperty (runOpenCLGlobal clProp)
 checkGradientCL :: (Inner (OpenCL Global) Double a, D a ~ a,
                     Inner (OpenCL Global) Double b, D b ~ b,
                     Arbitrary a, Arbitrary b,
-                    Show a, Show b)
-               => (forall s. Diff (OpenCL s) a b) -> Property
-checkGradientCL diff = checkGradient 1e5 0.05 0.0008 clProperty diff
+                    Show a, Show b,
+                    Loadable a a',
+                    Loadable b b'
+                   )
+               => Diff (OpenCL Global) a' b' -> Property
+checkGradientCL diff = checkGradient 1e5 0.05 0.0008 clProperty (fromCPU >>> diff >>> fromGPU)
 
-fromCPU :: (MonadCL s m, KnownNat n) => Diff m (C.Blob n) (Blob s n)
-fromCPU = Diff run
-  where
-    run a = do b <- Blob.fromList (C.toList a)
-               return (b, backward)
-    backward db = C.fromList <$> Blob.toList db
+class Loadable x y | x -> y, y -> x where
+  fromCPU :: Diff (OpenCL Global) x y
+  fromGPU :: Diff (OpenCL Global) y x
 
-toCPU :: (MonadCL s m, KnownNat n) => Diff m (Blob s n) (C.Blob n)
-toCPU = Diff run
-  where
-    run a = do b <- C.fromList <$> Blob.toList a
-               return (b, backward)
-    backward db = Blob.fromList (C.toList db)
+instance Loadable Double Double where
+  fromCPU = id
+  fromGPU = id
+
+instance (KnownNat n) => Loadable (C.Blob n) (Blob Global n) where
+  fromCPU = Diff run
+    where
+      run a = do b <- Blob.fromList (C.toList a)
+                 return (b, backward)
+      backward db = C.fromList <$> Blob.toList db
+
+  fromGPU = Diff run
+    where
+      run a = do b <- C.fromList <$> Blob.toList a
+                 return (b, backward)
+      backward db = Blob.fromList (C.toList db)
+
+instance (Loadable a a1, Loadable b b1) => Loadable (a, b) (a1, b1) where
+  fromCPU = Diff.first fromCPU >>> Diff.second fromCPU
+  fromGPU = Diff.first fromGPU >>> Diff.second fromGPU
 
 -- OpenCL flat blob stuff
 
 prop_fcdiff :: Property
-prop_fcdiff = checkGradientCL ((Diff.first fromCPU >>> Diff.second fromCPU) >>> (fcDiff @1 @1) >>> toCPU)
+prop_fcdiff = checkGradientCL (fcDiff @1 @1)
+
+prop_reludiff :: Property
+prop_reludiff = checkGradientCL (reluDiff @5)
+
+prop_sigmoiddiff :: Property
+prop_sigmoiddiff = checkGradientCL (sigmoidDiff @5)
+
+prop_quadraticcost :: Property
+prop_quadraticcost = checkGradientCL (quadraticCost @5)
+
 
 -- Make TemplateHaskell aware of above definitions.
 $(return [])

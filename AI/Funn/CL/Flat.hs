@@ -29,7 +29,7 @@ import           AI.Funn.CL.Code as C
 kSOURCE :: String
 kSOURCE = C.unpack $(embedFile "_flat.cl")
 
-reluDiff :: forall s n. (KnownNat n) => Diff (OpenCL s) (Blob s n) (Blob s n)
+reluDiff :: forall n s. (KnownNat n) => Diff (OpenCL s) (Blob s n) (Blob s n)
 reluDiff = Diff run
   where
     run xs = do
@@ -49,7 +49,7 @@ reluDiff = Diff run
     n :: Integer
     n = natVal (Proxy :: Proxy n)
 
-sigmoidDiff :: forall s n. (KnownNat n) => Diff (OpenCL s) (Blob s n) (Blob s n)
+sigmoidDiff :: forall n s. (KnownNat n) => Diff (OpenCL s) (Blob s n) (Blob s n)
 sigmoidDiff = Diff run
   where
     run xs = do
@@ -83,7 +83,7 @@ sigmoidDiff = Diff run
     n :: Integer
     n = natVal (Proxy :: Proxy n)
 
-quadraticCost :: forall s n. (KnownNat n) => Diff (OpenCL s) (Blob s n, Blob s n) Double
+quadraticCost :: forall n s. (KnownNat n) => Diff (OpenCL s) (Blob s n, Blob s n) Double
 quadraticCost = Diff run
   where
     run (xs, ys) = do
@@ -93,8 +93,8 @@ quadraticCost = Diff run
       return (o, backward ds)
 
     backward ds δ = do
-      dx <- scaleBlob δ ds
-      dy <- scaleBlob (-δ) ds
+      dx <- scaleBlob (2 * δ) ds
+      dy <- scaleBlob (-2 * δ) ds
       return (dx, dy)
 
 fcDiff :: forall α β m s. (MonadCL s m, KnownNat α, KnownNat β) =>
