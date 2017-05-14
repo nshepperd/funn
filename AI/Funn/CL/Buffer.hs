@@ -11,6 +11,7 @@ import           Data.Foldable hiding (toList, concat)
 import           Data.List hiding (concat)
 import           Data.Monoid
 import           Data.Traversable
+import qualified Data.Vector.Generic as V
 
 import           Control.Monad.IO.Class
 import           Foreign.Storable (Storable)
@@ -35,16 +36,23 @@ free (Buffer mem _ _) = Mem.free mem
 arg :: Buffer s a -> KernelArg s
 arg (Buffer mem offset size) = Mem.arg mem <> int32Arg offset
 
+-- O(1)
+size :: Buffer s a -> Int
+size (Buffer _ _ size) = size
+
+-- O(n)
 fromList :: (MonadCL s m, Storable a) => [a] -> m (Buffer s a)
 fromList [] = malloc 0
 fromList xs = do mem <- Mem.fromList xs
                  return (Buffer mem 0 (length xs))
 
--- Inefficient!
+-- O(n)
 toList :: (MonadCL s m, Storable a) => Buffer s a -> m [a]
-toList (Buffer mem offset size) = do xs <- Mem.toList mem
-                                     return (take size $ drop offset $ xs)
+toList (Buffer mem offset size) = do
+  xs <- Mem.peekSubArray offset size mem
+  return (V.toList xs)
 
+-- O(1)
 slice :: Int -> Int -> Buffer s a -> Buffer s a
 slice offset size (Buffer mem _off _size)
   | offset + size <= _size = Buffer mem (_off + offset) size
@@ -53,6 +61,13 @@ slice offset size (Buffer mem _off _size)
                                     ++ show size ++ " > "
                                     ++ show _size)
 
+-- O(n)
 concat :: (MonadCL s m, Storable a) => [Buffer s a] -> m (Buffer s a)
-concat xs = do values <- traverse toList xs
-               fromList (fold values)
+concat xs = do
+  dst@(Buffer dst_mem _ _) <- malloc totalSize
+  for (zip offsets xs) $ \(dst_offset, Buffer src src_offset src_len) -> do
+    Mem.copy src dst_mem src_offset dst_offset src_len
+  return dst
+  where
+    totalSize = sum (map size xs)
+    offsets = scanl (+) 0 (map size xs)

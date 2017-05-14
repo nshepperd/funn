@@ -1,12 +1,16 @@
 {-# LANGUAGE ScopedTypeVariables, ForeignFunctionInterface #-}
 module AI.Funn.CL.Mem (
   Mem, malloc, free, arg,
-  fromList, toList
+  fromList, toList,
+  peekSubArray, copy,
   ) where
 
 import           Control.Exception
 import           Control.Monad.IO.Class
 import           Data.Int
+import qualified Data.Vector.Storable as S
+import qualified Data.Vector.Storable.Mutable as M
+import qualified Data.Vector.Generic as V
 import           Foreign.ForeignPtr
 import           Foreign.Ptr
 import           Foreign.Storable (Storable(..))
@@ -43,14 +47,37 @@ fromList :: (MonadCL s m, Storable a) => [a] -> m (Mem s a)
 fromList xs = do ctx <- getContext
                  fromAlloc (CL.newListArray ctx xs)
 
-toList :: forall a m s. (MonadCL s m, Storable a) => Mem s a -> m [a]
+toList :: (MonadCL s m, Storable a) => Mem s a -> m [a]
 toList mem = do queue <- getCommandQueue
                 liftIO $ tryAllocation $ withMem mem $ \memobj -> do
-                  n <- (`div` elemSize) . fromIntegral <$> CL.memobjSize memobj
+                  n <- (`div` elemSize mem) . fromIntegral <$> CL.memobjSize memobj
                   CL.peekListArray queue n memobj
+
+peekSubArray :: (MonadCL s m, Storable a) => Int -> Int -> Mem s a -> m (S.Vector a)
+peekSubArray offset 0 mem = return V.empty
+peekSubArray offset len mem = do
+  q <- getCommandQueue
+  liftIO $ withMem mem $ \memobj -> do
+    ret <- M.new len
+    M.unsafeWith ret $ \ptr -> do
+      CL.peekArray q offset len memobj ptr
+    S.unsafeFreeze ret
+
+elemSize :: forall a proxy. (Storable a) => proxy a -> Int
+elemSize _ = sizeOf (undefined :: a)
+
+copy :: (MonadCL s m, Storable a) => (Mem s a) -> (Mem s a) -> Int -> Int -> Int -> m ()
+copy src dst offSrc offDst len = do
+  q <- getCommandQueue
+  liftIO $ do
+    withMem src $ \srcobj -> do
+      withMem dst $ \dstobj -> do
+        e <- CL.enqueueCopyBuffer q srcobj dstobj offSrcBytes offDstBytes lenBytes []
+        CL.waitForEvents [e]
   where
-    elemSize :: Int
-    elemSize = sizeOf (undefined :: a)
+    offSrcBytes = fromIntegral $ offSrc * elemSize src
+    offDstBytes = fromIntegral $ offDst * elemSize src
+    lenBytes = fromIntegral $ len * elemSize src
 
 -- Utility functions --
 

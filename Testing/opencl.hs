@@ -26,6 +26,7 @@ import qualified AI.Funn.Diff.Diff as Diff
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.CL.Blob (Blob)
 import qualified AI.Funn.CL.Blob as Blob
+import qualified AI.Funn.CL.Buffer as Buffer
 import           AI.Funn.CL.Flat
 import qualified AI.Funn.Flat.Blob as C
 import           AI.Funn.Space
@@ -72,6 +73,35 @@ instance (KnownNat n) => Loadable (C.Blob n) (Blob Global n) where
 instance (Loadable a a1, Loadable b b1) => Loadable (a, b) (a1, b1) where
   fromCPU = Diff.first fromCPU >>> Diff.second fromCPU
   fromGPU = Diff.first fromGPU >>> Diff.second fromGPU
+
+-- Buffer properties.
+
+prop_Buffer_fromList :: Property
+prop_Buffer_fromList = monadic clProperty $ do
+  xs <- pick (arbitrary :: Gen [Double])
+  buf <- lift $ Buffer.fromList xs
+  ys <- lift $ Buffer.toList buf
+  assert (xs == ys)
+
+prop_Buffer_concat :: Property
+prop_Buffer_concat = monadic clProperty $ do
+  xs <- pick (arbitrary :: Gen [Double])
+  ys <- pick (arbitrary :: Gen [Double])
+  zs <- pick (arbitrary :: Gen [Double])
+  buf1 <- lift $ Buffer.fromList xs
+  buf2 <- lift $ Buffer.fromList ys
+  buf3 <- lift $ Buffer.fromList zs
+  buf <- lift $ Buffer.toList =<< Buffer.concat [buf1, buf2, buf3]
+  assert (buf == xs ++ ys ++ zs)
+
+prop_Buffer_slice :: Property
+prop_Buffer_slice = monadic clProperty $ do
+  xs <- pick (arbitrary :: Gen [Double])
+  offset <- pick (choose (0, length xs))
+  len <- pick (choose (0, length xs - offset))
+  sub <- lift $ Buffer.slice offset len <$> Buffer.fromList xs
+  ys <- lift $ Buffer.toList sub
+  assert (ys == take len (drop offset xs))
 
 -- OpenCL flat blob stuff
 
