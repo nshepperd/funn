@@ -29,21 +29,16 @@ import Testing.Util
 
 -- Setup for OpenCL test cases.
 
-clProperty :: (forall s. OpenCL s Property) -> Property
-clProperty clProp = ioProperty (runOpenCL clProp)
-
-data T
-
-clPropertyUnsafe :: OpenCL T Property -> Property
-clPropertyUnsafe f = clProperty (unsafeCoerce f)
+clProperty :: OpenCL Global Property -> Property
+clProperty clProp = ioProperty (runOpenCLGlobal clProp)
 
 -- Looser bounds for OpenCL as we are single precision.
-checkGradientCL :: (Inner (OpenCL T) Double a, D a ~ a,
-                    Inner (OpenCL T) Double b, D b ~ b,
+checkGradientCL :: (Inner (OpenCL Global) Double a, D a ~ a,
+                    Inner (OpenCL Global) Double b, D b ~ b,
                     Arbitrary a, Arbitrary b,
                     Show a, Show b)
                => (forall s. Diff (OpenCL s) a b) -> Property
-checkGradientCL diff = checkGradient 1e5 0.05 0.001 clPropertyUnsafe diff
+checkGradientCL diff = checkGradient 1e5 0.05 0.0008 clProperty diff
 
 fromCPU :: (MonadCL s m, KnownNat n) => Diff m (C.Blob n) (Blob s n)
 fromCPU = Diff run
@@ -63,11 +58,6 @@ toCPU = Diff run
 
 prop_fcdiff :: Property
 prop_fcdiff = checkGradientCL ((Diff.first fromCPU >>> Diff.second fromCPU) >>> (fcDiff @1 @1) >>> toCPU)
-  -- where
-  --   d :: Diff (OpenCL s) (Blob s _, Blob s 4) (Blob s 5)
-  --   d = fcDiff
-  --   -- ((fromCPU *** fromCPU) >>> _ (fcDiff) >>> toCPU)
-
 
 -- Make TemplateHaskell aware of above definitions.
 $(return [])

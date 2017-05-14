@@ -11,7 +11,8 @@
 module AI.Funn.CL.MonadCL (
   OpenCL, runOpenCL, MonadCL(..),
   KernelArg(..), runKernel,
-  doubleArg, int32Arg) where
+  doubleArg, int32Arg,
+  Global, runOpenCLGlobal) where
 
 import           Control.Applicative
 import           Control.Monad
@@ -36,33 +37,34 @@ import qualified Data.Map.Strict as Map
 import           Foreign.Ptr
 import           GHC.Float
 import           System.IO.Unsafe
+import           Data.IORef
 
 import qualified Foreign.OpenCL.Bindings as CL
 import qualified Foreign.OpenCL.Bindings.Synchronization as CL
 
-data R = R {
+data CLInfo = CLInfo {
   _platformID :: CL.PlatformID,
   _context :: CL.Context,
   _device :: CL.DeviceID,
   _queue :: CL.CommandQueue
   }
-platformID :: Lens' R CL.PlatformID
-platformID f (R a b c d) = (\a' -> R a' b c d) <$> f a
-context :: Lens' R CL.Context
-context f (R a b c d) = (\b' -> R a b' c d) <$> f b
-device :: Lens' R CL.DeviceID
-device f (R a b c d) = (\c' -> R a b c' d) <$> f c
-queue :: Lens' R CL.CommandQueue
-queue f (R a b c d) = (\d' -> R a b c d') <$> f d
+platformID :: Lens' CLInfo CL.PlatformID
+platformID f (CLInfo a b c d) = (\a' -> CLInfo a' b c d) <$> f a
+context :: Lens' CLInfo CL.Context
+context f (CLInfo a b c d) = (\b' -> CLInfo a b' c d) <$> f b
+device :: Lens' CLInfo CL.DeviceID
+device f (CLInfo a b c d) = (\c' -> CLInfo a b c' d) <$> f c
+queue :: Lens' CLInfo CL.CommandQueue
+queue f (CLInfo a b c d) = (\d' -> CLInfo a b c d') <$> f d
 
-data S = S {
+data ProgramCache = ProgramCache {
   _programs :: Map String CL.Program,
   _kernels :: Map (String, String) CL.Kernel
   }
-programs :: Lens' S (Map String CL.Program)
-programs f (S x y) = (\x' -> S x' y) <$> f x
-kernels :: Lens' S (Map (String,String) CL.Kernel)
-kernels f (S x y) = S x <$> (f y)
+programs :: Lens' ProgramCache (Map String CL.Program)
+programs f (ProgramCache x y) = (\x' -> ProgramCache x' y) <$> f x
+kernels :: Lens' ProgramCache (Map (String,String) CL.Kernel)
+kernels f (ProgramCache x y) = ProgramCache x <$> (f y)
 
 class MonadIO m => MonadCL s m | m -> s where
   getPlatformID :: m CL.PlatformID
@@ -71,7 +73,7 @@ class MonadIO m => MonadCL s m | m -> s where
   getCommandQueue :: m CL.CommandQueue
   getKernel :: String -> String -> String -> m CL.Kernel
 
-newtype OpenCLT s m a = OpenCL { getOpenCL :: ReaderT R (StateT S m) a }
+newtype OpenCLT s m a = OpenCL { getOpenCL :: ReaderT CLInfo (StateT ProgramCache m) a }
                       deriving (Functor, Applicative, Monad, MonadIO)
 
 instance MonadTrans (OpenCLT s) where
@@ -79,12 +81,16 @@ instance MonadTrans (OpenCLT s) where
 
 type OpenCL s = OpenCLT s IO
 
+initialize :: IO CLInfo
+initialize = do plat:_ <- CL.getPlatformIDs
+                [dev] <- CL.getDeviceIDs [CL.DeviceTypeAll] plat
+                ctx <- CL.createContext [dev] [CL.ContextPlatform plat] CL.NoContextCallback
+                q <- CL.createCommandQueue ctx dev []
+                return (CLInfo plat ctx dev q)
+
 runOpenCL :: (forall s. OpenCL s a) -> IO a
-runOpenCL (OpenCL k) = do plat:_ <- CL.getPlatformIDs
-                          [dev] <- CL.getDeviceIDs [CL.DeviceTypeAll] plat
-                          ctx <- CL.createContext [dev] [CL.ContextPlatform plat] CL.NoContextCallback
-                          q <- CL.createCommandQueue ctx dev []
-                          evalStateT (runReaderT k (R plat ctx dev q)) (S Map.empty Map.empty)
+runOpenCL (OpenCL k) = do clinfo <- initialize
+                          evalStateT (runReaderT k clinfo) (ProgramCache Map.empty Map.empty)
 
 instance MonadIO m => MonadCL s (OpenCLT s m) where
   getPlatformID = OpenCL (view platformID)
@@ -145,3 +151,25 @@ runKernel source entryPoint args globalOffsets globalSizes localSizes =
            CL.waitForEvents [ev]
          go (KernelArg f : fs) real_args = f (\arg -> go fs (real_args . (arg++)))
      liftIO $ go args id
+
+-- Run OpenCL in a global context.
+-- More performant for tests.
+
+data Global
+
+global_context :: IORef (Maybe (CLInfo, ProgramCache))
+global_context = unsafePerformIO $ newIORef Nothing
+
+runOpenCLGlobal :: OpenCL Global a -> IO a
+runOpenCLGlobal (OpenCL k) = do
+  context <- readIORef global_context
+  info <- case context of
+            Just info -> pure info
+            Nothing -> do clinfo <- initialize
+                          return (clinfo, (ProgramCache Map.empty Map.empty))
+  go info
+  where
+    go (clinfo, programcache) = do
+      (a, newpc) <- runStateT (runReaderT k clinfo) programcache
+      writeIORef global_context (Just (clinfo, newpc))
+      return a
