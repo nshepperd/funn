@@ -92,7 +92,6 @@ sampleRNN n s0 next = SL.evalStateT (unfoldM n step) (s0, 0)
 
 data Commands = Train (Maybe FilePath) FilePath (Maybe FilePath) (Maybe FilePath) Int Double Integer
               | Sample FilePath (Maybe Int)
-              | CheckDeriv
               deriving (Show)
 
 instance (Additive m a, Applicative m) => Zero m (Vector a) where
@@ -189,11 +188,7 @@ main = do
                          (info (Sample
                                 <$> strOption (long "snapshot" <> action "file")
                                 <*> optional (option auto (long "length")))
-                          (progDesc "Sample output."))
-                         <>
-                         command "check"
-                         (info (pure CheckDeriv)
-                          (progDesc "Check Derivatives.")))
+                          (progDesc "Sample output.")))
                    fullDesc)
 
   cmd <- customExecParser (prefs showHelpOnError) optparser
