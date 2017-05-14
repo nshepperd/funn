@@ -12,6 +12,7 @@ import           Data.List hiding (concat)
 import           Data.Monoid
 import           Data.Traversable
 import qualified Data.Vector.Generic as V
+import qualified Data.Vector.Storable as S
 
 import           Control.Monad.IO.Class
 import           Foreign.Storable (Storable)
@@ -41,16 +42,20 @@ size :: Buffer s a -> Int
 size (Buffer _ _ size) = size
 
 -- O(n)
+fromVector :: (MonadCL s m, Storable a) => S.Vector a -> m (Buffer s a)
+fromVector xs = do buf@(Buffer mem 0 _) <- malloc (V.length xs)
+                   Mem.pokeSubArray 0 xs mem
+                   return buf
+
 fromList :: (MonadCL s m, Storable a) => [a] -> m (Buffer s a)
-fromList [] = malloc 0
-fromList xs = do mem <- Mem.fromList xs
-                 return (Buffer mem 0 (length xs))
+fromList xs = fromVector (S.fromList xs)
 
 -- O(n)
+toVector :: (MonadCL s m, Storable a) => Buffer s a -> m (S.Vector a)
+toVector (Buffer mem offset size) = Mem.peekSubArray offset size mem
+
 toList :: (MonadCL s m, Storable a) => Buffer s a -> m [a]
-toList (Buffer mem offset size) = do
-  xs <- Mem.peekSubArray offset size mem
-  return (V.toList xs)
+toList buffer = S.toList <$> toVector buffer
 
 -- O(1)
 slice :: Int -> Int -> Buffer s a -> Buffer s a

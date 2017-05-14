@@ -1,8 +1,7 @@
 {-# LANGUAGE ScopedTypeVariables, ForeignFunctionInterface #-}
 module AI.Funn.CL.Mem (
   Mem, malloc, free, arg,
-  fromList, toList,
-  peekSubArray, copy,
+  peekSubArray, pokeSubArray, copy
   ) where
 
 import           Control.Exception
@@ -22,6 +21,9 @@ import qualified Foreign.OpenCL.Bindings.Synchronization as CL
 import qualified Foreign.OpenCL.Bindings.Types as CL
 
 import           AI.Funn.CL.MonadCL
+
+-- Thin wrapper around OpenCL memory objects.
+-- These have a minimum size of 1 element.
 
 data CMem
 newtype Mem s a = Mem (ForeignPtr CMem)
@@ -43,15 +45,14 @@ arg mem = KernelArg run
   where
     run k = withMem mem (k . pure . CL.MObjArg)
 
-fromList :: (MonadCL s m, Storable a) => [a] -> m (Mem s a)
-fromList xs = do ctx <- getContext
-                 fromAlloc (CL.newListArray ctx xs)
-
-toList :: (MonadCL s m, Storable a) => Mem s a -> m [a]
-toList mem = do queue <- getCommandQueue
-                liftIO $ tryAllocation $ withMem mem $ \memobj -> do
-                  n <- (`div` elemSize mem) . fromIntegral <$> CL.memobjSize memobj
-                  CL.peekListArray queue n memobj
+pokeSubArray :: (MonadCL s m, Storable a) => Int -> S.Vector a -> Mem s a -> m ()
+pokeSubArray offset xs mem
+  | V.null xs = return ()
+  | otherwise = do
+      q <- getCommandQueue
+      liftIO $ withMem mem $ \memobj -> do
+        S.unsafeWith xs $ \ptr -> do
+          CL.pokeArray q offset (V.length xs) ptr memobj
 
 peekSubArray :: (MonadCL s m, Storable a) => Int -> Int -> Mem s a -> m (S.Vector a)
 peekSubArray offset 0 mem = return V.empty
@@ -67,6 +68,7 @@ elemSize :: forall a proxy. (Storable a) => proxy a -> Int
 elemSize _ = sizeOf (undefined :: a)
 
 copy :: (MonadCL s m, Storable a) => (Mem s a) -> (Mem s a) -> Int -> Int -> Int -> m ()
+copy src dst offSrc offDst 0 = return ()
 copy src dst offSrc offDst len = do
   q <- getCommandQueue
   liftIO $ do
@@ -93,12 +95,12 @@ tryAllocation m = catch m (\(e :: CL.ClException) -> tryAgain)
   where
     tryAgain = do
       -- try again after hopefully freeing space
-      putStrLn "Try Minor GC"
+      putStrLn "tryAllocation: Failed to allocate memory object, trying minor GC..."
       performMinorGC
       catch m (\(e :: CL.ClException) -> tryMajor)
 
     tryMajor = do
-      putStrLn "Try Major GC"
+      putStrLn "tryAllocation: Failed again, trying major GC."
       performGC
       m
 
