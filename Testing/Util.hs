@@ -45,8 +45,9 @@ measure diff a δa =
      l' <- Diff.runDiffForward diff =<< (a `plus` δa)
      let δL_finite = l' - l
      return (DiffProp l δL_finite δL_backprop
-             (abs (δL_backprop - δL_finite))
-             (abs δL_backprop + abs δL_finite))
+             (abs (δL_backprop - δL_finite) / 2)
+             ((abs δL_backprop + abs δL_finite) / 2)
+             )
 
 rescale :: (Monad m, Inner m Double a) => Double -> a -> m a
 rescale ε a = do

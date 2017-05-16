@@ -21,13 +21,14 @@ import           Test.QuickCheck.Gen.Unsafe
 import           Test.QuickCheck.Monadic
 import           Unsafe.Coerce
 
-import           AI.Funn.Diff.Diff (Diff(..), Derivable(..))
+import           AI.Funn.Diff.Diff (Diff(..), Derivable(..), runDiffForward)
 import qualified AI.Funn.Diff.Diff as Diff
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.CL.Blob (Blob)
 import qualified AI.Funn.CL.Blob as Blob
 import qualified AI.Funn.CL.Buffer as Buffer
 import           AI.Funn.CL.Flat
+import           AI.Funn.CL.LSTM
 import qualified AI.Funn.Flat.Blob as C
 import           AI.Funn.Space
 
@@ -103,19 +104,74 @@ prop_Buffer_slice = monadic clProperty $ do
   ys <- lift $ Buffer.toList sub
   assert (ys == take len (drop offset xs))
 
--- OpenCL flat blob stuff
+-- Blob properties.
+
+pickBlob :: (KnownNat n) => PropertyM (OpenCL Global) (Blob Global n)
+pickBlob = lift . runDiffForward fromCPU =<< pick arbitrary
+
+assertEqual :: (KnownNat n) => Blob Global n -> Blob Global n -> PropertyM (OpenCL Global) ()
+assertEqual one two = do one_c <- lift (runDiffForward fromGPU one)
+                         two_c <- lift (runDiffForward fromGPU two)
+                         stop (one_c === two_c)
+
+prop_Blob_plus_zero :: Property
+prop_Blob_plus_zero = monadic clProperty $ do
+  xs <- pickBlob @10
+  z <- lift zero
+  ys <- lift (plus xs z)
+  assertEqual xs ys
+
+prop_Blob_plus_comm :: Property
+prop_Blob_plus_comm = monadic clProperty $ do
+  xs <- pickBlob @10
+  ys <- pickBlob @10
+  z1 <- lift (plus xs ys)
+  z2 <- lift (plus ys xs)
+  assertEqual z1 z2
+
+prop_Blob_plus :: Property
+prop_Blob_plus = monadic clProperty $ do
+  xs <- pickBlob @10
+  ys <- pickBlob @10
+  z1 <- lift (plus xs ys)
+  xs_c <- lift (runDiffForward fromGPU xs)
+  ys_c <- lift (runDiffForward fromGPU ys)
+  z2 <- lift (runDiffForward fromCPU =<< plus xs_c ys_c)
+  assertEqual z1 z2
+
+prop_Blob_plusm :: Property
+prop_Blob_plusm = monadic clProperty $ do
+  xs <- pickBlob @10
+  ys <- pickBlob @10
+  z1 <- lift (plus xs ys)
+  z2 <- lift (plusm [xs, ys])
+  assertEqual z1 z2
+
+prop_Blob_split :: Property
+prop_Blob_split = monadic clProperty $ do
+  zs <- pickBlob @9
+  let (x1, y1) = Blob.splitBlob @2 @7 zs
+  z1 <- lift (Blob.catBlob x1 y1)
+  assertEqual zs z1
+
+
+-- OpenCL flat diff
 
 prop_fcdiff :: Property
-prop_fcdiff = checkGradientCL (fcDiff @1 @1)
+prop_fcdiff = checkGradientCL (fcDiff @2 @2)
 
 prop_reludiff :: Property
 prop_reludiff = checkGradientCL (reluDiff @5)
 
 prop_sigmoiddiff :: Property
-prop_sigmoiddiff = checkGradientCL (sigmoidDiff @5)
+prop_sigmoiddiff = checkGradientCL (sigmoidDiff @2)
 
 prop_quadraticcost :: Property
 prop_quadraticcost = checkGradientCL (quadraticCost @5)
+
+prop_lstmdiff :: Property
+prop_lstmdiff = checkGradientCL (lstmDiff @2)
+
 
 
 -- Make TemplateHaskell aware of above definitions.

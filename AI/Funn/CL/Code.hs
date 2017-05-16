@@ -113,7 +113,7 @@ runCL cl = AST.Block (runGenSym (go cl))
         var <- genvar
         loop <- AST.Block <$> go (sub (exprVar var))
         rest <- go r
-        return $ [AST.StmtForEach (varName var) from to loop] <> rest
+        return $ [AST.StmtDeclare (declare var), AST.StmtForEach (varName var) from to loop] <> rest
 
   -- User utilities
 

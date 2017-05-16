@@ -6,7 +6,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
-module AI.Funn.CL.LSTM where
+module AI.Funn.CL.LSTM (lstmDiff) where
 
 import           Control.Applicative
 import           Control.Monad
@@ -109,11 +109,11 @@ backwardKernel ws store dcs' dys out_dws out_dcs out_dxs = do
   out_dxs `at` (in_index + 3) .= dgate_output
 
 
-lstm :: forall n s. (KnownNat n)
-     => Diff (OpenCL s)
-        (Blob s (2*n), (Blob s n, Blob s (4*n)))
-        (Blob s n, Blob s n)
-lstm = Diff run
+lstmDiff :: forall n s. (KnownNat n)
+         => Diff (OpenCL s)
+            (Blob s (2*n), (Blob s n, Blob s (4*n)))
+            (Blob s n, Blob s n)
+lstmDiff = Diff run
   where
     run (ws, (cs, xs)) = do
       store <- createBlob @ (8 * n)

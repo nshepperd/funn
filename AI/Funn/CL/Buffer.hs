@@ -1,6 +1,8 @@
 module AI.Funn.CL.Buffer (
   Buffer, malloc, free, arg,
-  fromList, toList, slice, concat
+  fromVector, toVector,
+  fromList, toList,
+  slice, concat, clone
   ) where
 
 import           Prelude hiding (concat)
@@ -20,6 +22,9 @@ import           Foreign.Storable (Storable)
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.CL.Mem (Mem)
 import qualified AI.Funn.CL.Mem as Mem
+
+-- A Buffer is a view into a memory object, supporting efficient
+-- slicing and conversion, comparable to a storable Vector.
 
 data Buffer s a = Buffer !(Mem s a) !Int !Int
 
@@ -65,6 +70,9 @@ slice offset size (Buffer mem _off _size)
                                     ++ show offset ++ " + "
                                     ++ show size ++ " > "
                                     ++ show _size)
+
+clone :: (MonadCL s m, Storable a) => (Buffer s a) -> m (Buffer s a)
+clone buffer = concat [buffer]
 
 -- O(n)
 concat :: (MonadCL s m, Storable a) => [Buffer s a] -> m (Buffer s a)

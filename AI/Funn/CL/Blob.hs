@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -18,9 +19,12 @@ module AI.Funn.CL.Blob (
 import           Control.Applicative
 import           Control.Monad
 import           Data.Foldable hiding (toList)
+import qualified Data.Foldable as F
 import           Data.List
 import           Data.Monoid
 import           Data.Traversable
+import qualified Data.Vector.Generic as V
+import qualified Data.Vector.Storable as S
 
 import           Control.Exception
 import           Control.Monad.IO.Class
@@ -32,13 +36,37 @@ import           AI.Funn.CL.Buffer (Buffer)
 import qualified AI.Funn.CL.Buffer as Buffer
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.Diff.Diff (Derivable(..))
+import           AI.Funn.Space
 
 import           AI.Funn.CL.Code as C
 
 newtype Blob s (n :: Nat) = Blob (Buffer s Float)
 
+-- Classes --
+
 instance Derivable (Blob s n) where
   type D (Blob s n) = Blob s n
+
+instance (MonadCL s m, KnownNat n) => Zero m (Blob s n) where
+  zero = pureBlob 0
+
+instance (MonadCL s m, KnownNat n) => Semi m (Blob s n) where
+  plus = addBlob
+
+instance (MonadCL s m, KnownNat n) => Additive m (Blob s n) where
+  plusm = addBlobs . F.toList
+
+instance (MonadCL s m, KnownNat n) => Scale m Double (Blob s n) where
+  scale = scaleBlob
+
+instance (MonadCL s m, KnownNat n) => VectorSpace m Double (Blob s n) where
+  {}
+
+instance (MonadCL s m, KnownNat n) => Inner m Double (Blob s n) where
+  inner x y = do dot <- mulBlob x y
+                 sum <$> toList dot
+
+-- Main operations --
 
 freeBlob :: Blob s n -> OpenCL s ()
 freeBlob (Blob mem) = Buffer.free mem
@@ -61,14 +89,14 @@ toList (Blob mem) = map float2Double <$> Buffer.toList mem
 blobArg :: Blob s n -> KernelArg s
 blobArg (Blob mem) = Buffer.arg mem
 
--- Blob Operations --
+-- Arithmetic operations --
 
-pureBlob :: forall n s. (KnownNat n) => Double -> OpenCL s (Blob s n)
-pureBlob x = fromList (replicate n x)
+pureBlob :: forall n m s. (MonadCL s m, KnownNat n) => Double -> m (Blob s n)
+pureBlob x = Blob <$> Buffer.fromVector (S.replicate n (double2Float x))
   where
     n = fromIntegral $ natVal (Proxy :: Proxy n)
 
-scaleBlob :: forall n s. (KnownNat n) => Double -> Blob s n -> OpenCL s (Blob s n)
+scaleBlob :: forall n m s. (MonadCL s m, KnownNat n) => Double -> Blob s n -> m (Blob s n)
 scaleBlob a xs = do ys <- createBlob
                     runKernel scaleSource "run" [doubleArg a, blobArg xs, blobArg ys] [] [n] [1]
                     return ys
@@ -80,7 +108,7 @@ scaleBlob a xs = do ys <- createBlob
       C.at ys i .= a * (C.at xs i)
     scaleSource = C.kernel scale
 
-addBlob :: forall n s. (KnownNat n) => Blob s n -> Blob s n -> OpenCL s (Blob s n)
+addBlob :: forall n m s. (MonadCL s m, KnownNat n) => Blob s n -> Blob s n -> m (Blob s n)
 addBlob xs ys = do zs <- createBlob
                    runKernel addSource "run" [blobArg xs, blobArg ys, blobArg zs] [] [n] [1]
                    return zs
@@ -92,7 +120,21 @@ addBlob xs ys = do zs <- createBlob
       C.at zs i .= C.at xs i + C.at ys i
     addSource = C.kernel add
 
-subBlob :: forall n s. (KnownNat n) => Blob s n -> Blob s n -> OpenCL s (Blob s n)
+addBlobs :: forall n m s. (MonadCL s m, KnownNat n) => [Blob s n] -> m (Blob s n)
+addBlobs [] = zero
+addBlobs (Blob one:xss) = do zs <- Blob <$> Buffer.clone one
+                             for_ xss $ \xs -> do
+                               runKernel addSource "run" [blobArg xs, blobArg zs] [] [n] [1]
+                             return zs
+  where
+    n = fromIntegral $ natVal (Proxy :: Proxy n)
+    add :: C.ArrayR Float -> C.ArrayW Float -> C.CL ()
+    add xs zs = do
+      i <- C.get_global_id 0
+      C.at zs i .= C.at zs i + C.at xs i
+    addSource = C.kernel add
+
+subBlob :: forall n m s. (MonadCL s m, KnownNat n) => Blob s n -> Blob s n -> m (Blob s n)
 subBlob xs ys = do zs <- createBlob
                    runKernel subSource "run" [blobArg xs, blobArg ys, blobArg zs] [] [n] [1]
                    return zs
@@ -104,7 +146,19 @@ subBlob xs ys = do zs <- createBlob
       C.at zs i .= C.at xs i - C.at ys i
     subSource = C.kernel sub
 
-squareBlob :: forall n s. (KnownNat n) => Blob s n -> OpenCL s (Blob s n)
+mulBlob :: forall n m s. (MonadCL s m, KnownNat n) => Blob s n -> Blob s n -> m (Blob s n)
+mulBlob xs ys = do zs <- createBlob
+                   runKernel mulSource "run" [blobArg xs, blobArg ys, blobArg zs] [] [n] [1]
+                   return zs
+  where
+    n = fromIntegral $ natVal (Proxy :: Proxy n)
+    mul :: C.ArrayR Float -> C.ArrayR Float -> C.ArrayW Float -> C.CL ()
+    mul xs ys zs = do
+      i <- C.get_global_id 0
+      C.at zs i .= C.at xs i * C.at ys i
+    mulSource = C.kernel mul
+
+squareBlob :: forall n m s. (MonadCL s m, KnownNat n) => Blob s n -> m (Blob s n)
 squareBlob xs = do ys <- createBlob
                    runKernel squareSource "run" [blobArg xs, blobArg ys] [] [n] [1]
                    return ys
@@ -116,7 +170,7 @@ squareBlob xs = do ys <- createBlob
       C.at ys i .= (C.at xs i)^2
     squareSource = C.kernel square
 
-sqrtBlob :: forall n s. (KnownNat n) => Blob s n -> OpenCL s (Blob s n)
+sqrtBlob :: forall n m s. (MonadCL s m, KnownNat n) => Blob s n -> m (Blob s n)
 sqrtBlob xs = do ys <- createBlob
                  runKernel sqrtSource "run" [blobArg xs, blobArg ys] [] [n] [1]
                  return ys
@@ -128,7 +182,7 @@ sqrtBlob xs = do ys <- createBlob
       C.at ys i .= sqrt (C.at xs i)
     sqrtSource = C.kernel sqrtc
 
-divideBlob :: forall n s. (KnownNat n) => Blob s n -> Blob s n -> OpenCL s (Blob s n)
+divideBlob :: forall n m s. (MonadCL s m, KnownNat n) => Blob s n -> Blob s n -> m (Blob s n)
 divideBlob xs ys = do zs <- createBlob
                       runKernel divideSource "run" [blobArg xs, blobArg ys, blobArg zs] [] [n] [1]
                       return zs

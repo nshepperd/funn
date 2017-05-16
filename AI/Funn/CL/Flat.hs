@@ -14,6 +14,7 @@ import           Control.Monad
 import           Data.Proxy
 import qualified Data.ByteString.Char8 as C
 import           Data.FileEmbed
+import           Debug.Trace
 
 import           Control.Monad.IO.Class
 import qualified Foreign.OpenCL.Bindings as CL
@@ -103,7 +104,7 @@ fcDiff = Diff run
   where
     run (pars, xs) = do
       ys <- createBlob
-      (runKernel kSOURCE "fcdiff"
+      (runKernel forwardK "run"
        [int32Arg α, int32Arg β, blobArg pars, blobArg xs, blobArg ys]
        [] [β] [1])
       return (ys, backward pars xs)
@@ -114,16 +115,59 @@ fcDiff = Diff run
       dpars <- createBlob
       dxs <- createBlob
       let (dws :: Blob s (α * β), dbs :: Blob s β) = splitBlob dpars
-      (runKernel kSOURCE "fcdiff_dws"
-       [int32Arg α, int32Arg β, blobArg xs, blobArg dys, blobArg dws]
+      (runKernel backwardwsK "run"
+       [int32Arg α, blobArg xs, blobArg dys, blobArg dws]
        [] [α, β] [1, 1])
-      (runKernel kSOURCE "fcdiff_dxs"
+      (runKernel backwardxsK "run"
        [int32Arg α, int32Arg β, blobArg pars, blobArg dys, blobArg dxs]
        [] [α] [1])
-      (runKernel kSOURCE "fcdiff_dbs"
+      (runKernel backwardbsK "run"
        [blobArg dys, blobArg dbs]
        [] [β] [1])
       return (dpars, dxs)
+
+    kahan :: Expr Float -> (Expr Int -> Expr Float) -> Expr Int -> CL (Expr Float)
+    kahan initial inputs count = do
+      total <- eval initial
+      comp <- eval 0
+      forEach 0 count $ \x -> do
+        input <- eval (inputs x)
+        add <- eval (input - comp)
+        t <- eval (total + add)
+        comp .= (t - total) - add;
+        total .= t;
+      return total
+
+    forwardK = C.kernel forwardSrc
+    forwardSrc :: Expr Int -> Expr Int -> ArrayR Float -> ArrayR Float -> ArrayW Float -> CL ()
+    forwardSrc α β pars xs ys = do
+      y <- get_global_id 0
+      let
+        inputs x = (pars `at` (α * y + x)) * (xs `at` x)
+      total <- kahan (pars `at` (α*β + y)) inputs α
+      at ys y .= total
+
+    backwardwsK = C.kernel backwardwsSrc
+    backwardwsSrc :: Expr Int -> ArrayR Float -> ArrayR Float -> ArrayW Float -> CL ()
+    backwardwsSrc α xs dys dws = do
+      x <- get_global_id 0
+      y <- get_global_id 1
+      at dws (y * α + x) .= (xs `at` x) * (dys `at` y)
+
+    backwardxsK = C.kernel backwardxsSrc
+    backwardxsSrc :: Expr Int -> Expr Int -> ArrayR Float -> ArrayR Float -> ArrayW Float -> CL ()
+    backwardxsSrc α β pars dys dxs = do
+      x <- get_global_id 0
+      let
+        inputs y = at pars (α * y + x) * at dys y
+      total <- kahan 0 inputs β
+      at dxs x .= total
+
+    backwardbsK = C.kernel backwardbsSrc
+    backwardbsSrc :: ArrayR Float -> ArrayW Float -> CL ()
+    backwardbsSrc dys dbs = do
+      y <- get_global_id 0
+      at dbs y .= at dys y
 
     α = fromIntegral $ natVal (Proxy :: Proxy α)
     β = fromIntegral $ natVal (Proxy :: Proxy β)
