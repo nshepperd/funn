@@ -62,22 +62,27 @@ checkGradient :: (Monad m,
               => Double -> Double -> Double
               -> (m Property -> Property) -> Diff m a b -> Property
 checkGradient min_precision wiggle ε eval diff = monadic eval $ do
-  -- Reduce to (a -> Double)
-  xb <- pick arbitrary
-  let new_diff = diff >>> linear xb
   -- Get random input and perturbation.
   a <- pick arbitrary
   δa <- lift . rescale ε =<< pick arbitrary
+
+  -- Precondition: avoid loss of precision in a + δa.
+  a_mag <- lift (sqrt <$> inner a a)
+  δa_mag <- lift (sqrt <$> inner δa δa)
+  pre (δa_mag * min_precision > a_mag)
+
+  -- Reduce to (a -> Double)
+  xb <- pick arbitrary
+  let new_diff = diff >>> linear xb
+
+  -- Run gradient measurements
   stats <- lift (measure new_diff a δa)
-  -- Precondition: exclude very small δL which imply catastrophic
-  -- cancellation in l - l' and not necessarily any problem with the
-  -- calculations.
+  monitor (counterexample $ show stats)
+
+  -- Precondition: exclude very small δL to avoid loss of precision in l - l'.
   pre (abs (delta_finite stats) * min_precision > abs (cost stats))
-  let success = (diff_delta stats <= mean_delta stats * wiggle)
-  when (not success) $
-    monitor (counterexample $ show stats)
   -- Assert: finite gradient ~ backprop gradient.
-  assert success
+  assert (diff_delta stats <= mean_delta stats * wiggle)
 
 checkGradientI :: (Inner Identity Double a, D a ~ a,
                    Inner Identity Double b, D b ~ b,
