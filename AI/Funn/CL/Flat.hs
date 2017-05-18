@@ -58,13 +58,13 @@ sigmoidDiff = Diff run
       (runKernel sigmoidSrc "run"
        [blobArg xs, blobArg ys]
        [] [fromIntegral n] [1])
-      return (ys, backward ys)
+      return (ys, backward xs)
 
-    backward ys dys = do
+    backward xs dys = do
       dxs <- createBlob
       (runKernel sigmoidBackSrc "run"
-       [blobArg ys, blobArg dys, blobArg dxs]
-       [] [fromIntegral n] [1])
+       [blobArg xs, blobArg dys, blobArg dxs]
+       [] [fromIntegral n] [])
       return dxs
 
     sigmoidSrc = C.kernel sigmoid
@@ -75,11 +75,12 @@ sigmoidDiff = Diff run
 
     sigmoidBackSrc = C.kernel sigmoidBack
     sigmoidBack :: ArrayR Float -> ArrayR Float -> ArrayW Float -> CL ()
-    sigmoidBack ys dys dxs = do i <- get_global_id 0
+    sigmoidBack xs dys dxs = do i <- get_global_id 0
                                 let
-                                  y = ys `at` i
+                                  x = xs `at` i
                                   dy = dys `at` i
-                                (dxs `at` i) .= dy * y * (1 - y)
+                                z <- eval $ exp (-abs x)
+                                (dxs `at` i) .= dy * z / (1 + z)^2
 
     n :: Integer
     n = natVal (Proxy :: Proxy n)
