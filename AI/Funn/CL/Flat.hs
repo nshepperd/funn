@@ -5,7 +5,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE TemplateHaskell #-}
 module AI.Funn.CL.Flat (
-  reluDiff, sigmoidDiff,
+  reluDiff, sigmoidDiff, tanhDiff,
   fcDiff, quadraticCost
   ) where
 
@@ -81,6 +81,44 @@ sigmoidDiff = Diff run
                                   dy = dys `at` i
                                 z <- eval $ exp (-abs x)
                                 (dxs `at` i) .= dy * z / (1 + z)^2
+
+    n :: Integer
+    n = natVal (Proxy :: Proxy n)
+
+tanhDiff :: forall n s. (KnownNat n) => Diff (OpenCL s) (Blob s n) (Blob s n)
+tanhDiff = Diff run
+  where
+    run xs = do
+      ys <- createBlob
+      (runKernel tanhSrc "run"
+       [blobArg xs, blobArg ys]
+       [] [fromIntegral n] [])
+      return (ys, backward xs)
+
+    backward xs dys = do
+      dxs <- createBlob
+      (runKernel tanhBackSrc "run"
+       [blobArg xs, blobArg dys, blobArg dxs]
+       [] [fromIntegral n] [])
+      return dxs
+
+    tanhSrc = C.kernel tanhForward
+    tanhForward :: ArrayR Float -> ArrayW Float -> CL ()
+    tanhForward xs ys = do i <- get_global_id 0
+                           zp <- eval (exp (xs `at` i))
+                           zm <- eval (exp (-(xs `at` i)))
+                           at ys i .= (zp - zm) / (zp + zm)
+
+    tanhBackSrc = C.kernel tanhBack
+    tanhBack :: ArrayR Float -> ArrayR Float -> ArrayW Float -> CL ()
+    tanhBack xs dys dxs = do i <- get_global_id 0
+                             let
+                               x = at xs i
+                               dy = at dys i
+                             zp <- eval $ exp x
+                             zm <- eval $ exp (-x)
+                             z <- eval $ 2 / (zp + zm)
+                             at dxs i .= dy * z^2
 
     n :: Integer
     n = natVal (Proxy :: Proxy n)

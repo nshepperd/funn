@@ -166,6 +166,9 @@ prop_reludiff = checkGradientCL (reluDiff @5)
 prop_sigmoiddiff :: Property
 prop_sigmoiddiff = checkGradientCL (sigmoidDiff @2)
 
+prop_tanhdiff :: Property
+prop_tanhdiff = checkGradientCL (tanhDiff @1)
+
 prop_quadraticcost :: Property
 prop_quadraticcost = checkGradientCL (quadraticCost @5)
 
