@@ -30,6 +30,9 @@ class (Additive m a, Scale m x a) => VectorSpace m x a | a -> x where
 class (VectorSpace m x a) => Inner m x a | a -> x where
   inner :: a -> a -> m x
 
+class Inner m x a => Finite m x a | a -> x where
+  getBasis :: a -> m [x]
+
 (##) :: (Semi Identity a) => a -> a -> a
 x ## y = runIdentity (plus x y)
 
@@ -51,6 +54,8 @@ instance (Applicative m) => VectorSpace m () ()
 instance (Applicative m) => Inner m () () where
   inner _ _ = pure ()
 
+instance (Applicative m) => Finite m () () where
+  getBasis a = pure []
 
 -- Almost trivial: floats
 
@@ -68,6 +73,9 @@ instance (Applicative m) => Scale m Double Double where
 instance (Applicative m) => VectorSpace m Double Double
 instance (Applicative m) => Inner m Double Double where
   inner a b = pure (a * b)
+
+instance (Applicative m) => Finite m Double Double where
+  getBasis a = pure [a]
 
 
 -- pairs
@@ -90,6 +98,9 @@ instance (Applicative m, VectorSpace m x a, VectorSpace m x b) => VectorSpace m 
 
 instance (Applicative m, Num x, Inner m x a, Inner m x b) => Inner m x (a,b) where
   inner (a1, b1) (a2, b2) = (+) <$> inner a1 a2 <*> inner b1 b2
+
+instance (Applicative m, Num x, Finite m x a, Finite m x b) => Finite m x (a,b) where
+  getBasis (a, b) = (++) <$> getBasis a <*> getBasis b
 
 
 -- triplets
@@ -116,3 +127,9 @@ instance (Applicative m, Num x, Inner m x a, Inner m x b, Inner m x c) => Inner 
                                     <$> inner a1 a2
                                     <*> inner b1 b2
                                     <*> inner c1 c2
+
+instance (Applicative m, Num x, Finite m x a, Finite m x b, Finite m x c) => Finite m x (a,b,c) where
+  getBasis (a, b, c)  = (\x y z -> x ++ y ++ z)
+                        <$> getBasis a
+                        <*> getBasis b
+                        <*> getBasis c

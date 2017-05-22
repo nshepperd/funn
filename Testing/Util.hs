@@ -55,8 +55,8 @@ rescale ε a = do
   scale (ε / cut_magnitude) a
 
 checkGradient :: (Monad m,
-                  Inner m Double a, D a ~ a,
-                  Inner m Double b, D b ~ b,
+                  Finite m Double a, D a ~ a,
+                  Finite m Double b, D b ~ b,
                   Arbitrary a, Arbitrary b,
                   Show a, Show b)
               => Double -> Double -> Double
@@ -67,9 +67,9 @@ checkGradient min_precision wiggle ε eval diff = monadic eval $ do
   δa <- lift . rescale ε =<< pick arbitrary
 
   -- Precondition: avoid loss of precision in a + δa.
-  a_mag <- lift (sqrt <$> inner a a)
-  δa_mag <- lift (sqrt <$> inner δa δa)
-  pre (δa_mag * min_precision > a_mag)
+  a_parts <- lift (getBasis a)
+  δa_parts <- lift (getBasis δa)
+  pre (and $ zipWith (\a δa -> abs δa * min_precision > abs a) a_parts δa_parts)
 
   -- Reduce to (a -> Double)
   xb <- pick arbitrary
@@ -84,8 +84,8 @@ checkGradient min_precision wiggle ε eval diff = monadic eval $ do
   -- Assert: finite gradient ~ backprop gradient.
   assert (diff_delta stats <= mean_delta stats * wiggle)
 
-checkGradientI :: (Inner Identity Double a, D a ~ a,
-                   Inner Identity Double b, D b ~ b,
+checkGradientI :: (Finite Identity Double a, D a ~ a,
+                   Finite Identity Double b, D b ~ b,
                    Arbitrary a, Arbitrary b,
                    Show a, Show b)
                => Diff Identity a b -> Property

@@ -40,15 +40,15 @@ clProperty :: OpenCL Global Property -> Property
 clProperty clProp = ioProperty (runOpenCLGlobal clProp)
 
 -- Looser bounds for OpenCL as we are single precision.
-checkGradientCL :: (Inner (OpenCL Global) Double a, D a ~ a,
-                    Inner (OpenCL Global) Double b, D b ~ b,
+checkGradientCL :: (Finite (OpenCL Global) Double a, D a ~ a,
+                    Finite (OpenCL Global) Double b, D b ~ b,
                     Arbitrary a, Arbitrary b,
                     Show a, Show b,
                     Loadable a a',
                     Loadable b b'
                    )
                => Diff (OpenCL Global) a' b' -> Property
-checkGradientCL diff = checkGradient 1e5 0.05 0.0008 clProperty (fromCPU >>> diff >>> fromGPU)
+checkGradientCL diff = checkGradient 1e5 0.05 0.005 clProperty (fromCPU >>> diff >>> fromGPU)
 
 class Loadable x y | x -> y, y -> x where
   fromCPU :: Diff (OpenCL Global) x y

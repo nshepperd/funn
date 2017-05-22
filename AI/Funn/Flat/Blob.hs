@@ -60,6 +60,9 @@ instance (Applicative m, KnownNat n) => VectorSpace m Double (Blob n) where
 instance (Applicative m, KnownNat n) => Inner m Double (Blob n) where
   inner u v = pure (getBlob u HM.<.> getBlob v)
 
+instance (Applicative m, KnownNat n) => Finite m Double (Blob n) where
+  getBasis b = pure (toList b)
+
 instance Eq (Blob n) where
   b1 == b2  =  getBlob b1 == getBlob b2
 

@@ -66,6 +66,10 @@ instance (MonadCL s m, KnownNat n) => Inner m Double (Blob s n) where
   inner x y = do dot <- mulBlob x y
                  sum <$> toList dot
 
+instance (MonadCL s m, KnownNat n) => Finite m Double (Blob s n) where
+  getBasis b = toList b
+
+
 -- Main operations --
 
 freeBlob :: Blob s n -> OpenCL s ()
