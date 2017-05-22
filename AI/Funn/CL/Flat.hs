@@ -54,74 +54,34 @@ sigmoidDiff :: forall n s. (KnownNat n) => Diff (OpenCL s) (Blob s n) (Blob s n)
 sigmoidDiff = Diff run
   where
     run xs = do
-      ys <- createBlob
-      (runKernel sigmoidSrc "run"
-       [blobArg xs, blobArg ys]
-       [] [fromIntegral n] [1])
-      return (ys, backward xs)
+      ys <- sigmoid xs
+      return (ys, sigmoidBack xs)
 
-    backward xs dys = do
-      dxs <- createBlob
-      (runKernel sigmoidBackSrc "run"
-       [blobArg xs, blobArg dys, blobArg dxs]
-       [] [fromIntegral n] [])
-      return dxs
+    sigmoid = mapBlob $ \x -> do
+      z <- eval (exp x)
+      return $ z / (1 + z)
 
-    sigmoidSrc = C.kernel sigmoid
-    sigmoid :: ArrayR Float -> ArrayW Float -> CL ()
-    sigmoid xs ys = do i <- get_global_id 0
-                       z <- eval (exp (xs `at` i))
-                       at ys i .= z / (1 + z)
-
-    sigmoidBackSrc = C.kernel sigmoidBack
-    sigmoidBack :: ArrayR Float -> ArrayR Float -> ArrayW Float -> CL ()
-    sigmoidBack xs dys dxs = do i <- get_global_id 0
-                                let
-                                  x = xs `at` i
-                                  dy = dys `at` i
-                                z <- eval $ exp (-abs x)
-                                (dxs `at` i) .= dy * z / (1 + z)^2
-
-    n :: Integer
-    n = natVal (Proxy :: Proxy n)
+    sigmoidBack = zipWithBlob $ \x dy -> do
+      z <- eval $ exp (-abs x)
+      return $ dy * z / (1 + z)^2
 
 tanhDiff :: forall n s. (KnownNat n) => Diff (OpenCL s) (Blob s n) (Blob s n)
 tanhDiff = Diff run
   where
     run xs = do
-      ys <- createBlob
-      (runKernel tanhSrc "run"
-       [blobArg xs, blobArg ys]
-       [] [fromIntegral n] [])
-      return (ys, backward xs)
+      ys <- tanhForward xs
+      return (ys, tanhBack xs)
 
-    backward xs dys = do
-      dxs <- createBlob
-      (runKernel tanhBackSrc "run"
-       [blobArg xs, blobArg dys, blobArg dxs]
-       [] [fromIntegral n] [])
-      return dxs
+    tanhForward = mapBlob $ \x -> do
+      zp <- eval (exp x)
+      zm <- eval (exp (-x))
+      return $ (zp - zm) / (zp + zm)
 
-    tanhSrc = C.kernel tanhForward
-    tanhForward :: ArrayR Float -> ArrayW Float -> CL ()
-    tanhForward xs ys = do i <- get_global_id 0
-                           zp <- eval (exp (xs `at` i))
-                           zm <- eval (exp (-(xs `at` i)))
-                           at ys i .= (zp - zm) / (zp + zm)
-
-    tanhBackSrc = C.kernel tanhBack
-    tanhBack :: ArrayR Float -> ArrayR Float -> ArrayW Float -> CL ()
-    tanhBack xs dys dxs = do i <- get_global_id 0
-                             let
-                               x = at xs i
-                               dy = at dys i
-                             zp <- eval $ exp x
-                             zm <- eval $ exp (-x)
-                             z <- eval $ 2 / (zp + zm)
-                             at dxs i .= dy * z^2
-
-    n :: Integer
-    n = natVal (Proxy :: Proxy n)
+    tanhBack = zipWithBlob $ \x dy -> do
+      zp <- eval $ exp x
+      zm <- eval $ exp (-x)
+      z <- eval $ 2 / (zp + zm)
+      return $ dy * z^2
 
 quadraticCost :: forall n s. (KnownNat n) => Diff (OpenCL s) (Blob s n, Blob s n) Double
 quadraticCost = Diff run

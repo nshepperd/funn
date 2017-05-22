@@ -13,7 +13,8 @@ module AI.Funn.CL.Blob (
   blobArg,
   pureBlob, scaleBlob, addBlob, subBlob,
   squareBlob, sqrtBlob, divideBlob,
-  catBlob, splitBlob
+  catBlob, splitBlob,
+  mapBlob, zipWithBlob,
   ) where
 
 import           Control.Applicative
@@ -113,16 +114,7 @@ scaleBlob a xs = do ys <- createBlob
     scaleSource = C.kernel scale
 
 addBlob :: forall n m s. (MonadCL s m, KnownNat n) => Blob s n -> Blob s n -> m (Blob s n)
-addBlob xs ys = do zs <- createBlob
-                   runKernel addSource "run" [blobArg xs, blobArg ys, blobArg zs] [] [n] [1]
-                   return zs
-  where
-    n = fromIntegral $ natVal (Proxy :: Proxy n)
-    add :: C.ArrayR Float -> C.ArrayR Float -> C.ArrayW Float -> C.CL ()
-    add xs ys zs = do
-      i <- C.get_global_id 0
-      C.at zs i .= C.at xs i + C.at ys i
-    addSource = C.kernel add
+addBlob = zipWithBlob' (+)
 
 addBlobs :: forall n m s. (MonadCL s m, KnownNat n) => [Blob s n] -> m (Blob s n)
 addBlobs [] = zero
@@ -139,64 +131,19 @@ addBlobs (Blob one:xss) = do zs <- Blob <$> Buffer.clone one
     addSource = C.kernel add
 
 subBlob :: forall n m s. (MonadCL s m, KnownNat n) => Blob s n -> Blob s n -> m (Blob s n)
-subBlob xs ys = do zs <- createBlob
-                   runKernel subSource "run" [blobArg xs, blobArg ys, blobArg zs] [] [n] [1]
-                   return zs
-  where
-    n = fromIntegral $ natVal (Proxy :: Proxy n)
-    sub :: C.ArrayR Float -> C.ArrayR Float -> C.ArrayW Float -> C.CL ()
-    sub xs ys zs = do
-      i <- C.get_global_id 0
-      C.at zs i .= C.at xs i - C.at ys i
-    subSource = C.kernel sub
+subBlob = zipWithBlob' (-)
 
 mulBlob :: forall n m s. (MonadCL s m, KnownNat n) => Blob s n -> Blob s n -> m (Blob s n)
-mulBlob xs ys = do zs <- createBlob
-                   runKernel mulSource "run" [blobArg xs, blobArg ys, blobArg zs] [] [n] [1]
-                   return zs
-  where
-    n = fromIntegral $ natVal (Proxy :: Proxy n)
-    mul :: C.ArrayR Float -> C.ArrayR Float -> C.ArrayW Float -> C.CL ()
-    mul xs ys zs = do
-      i <- C.get_global_id 0
-      C.at zs i .= C.at xs i * C.at ys i
-    mulSource = C.kernel mul
-
-squareBlob :: forall n m s. (MonadCL s m, KnownNat n) => Blob s n -> m (Blob s n)
-squareBlob xs = do ys <- createBlob
-                   runKernel squareSource "run" [blobArg xs, blobArg ys] [] [n] [1]
-                   return ys
-  where
-    n = fromIntegral $ natVal (Proxy :: Proxy n)
-    square :: C.ArrayR Float -> C.ArrayW Float -> C.CL ()
-    square xs ys = do
-      i <- C.get_global_id 0
-      C.at ys i .= (C.at xs i)^2
-    squareSource = C.kernel square
-
-sqrtBlob :: forall n m s. (MonadCL s m, KnownNat n) => Blob s n -> m (Blob s n)
-sqrtBlob xs = do ys <- createBlob
-                 runKernel sqrtSource "run" [blobArg xs, blobArg ys] [] [n] [1]
-                 return ys
-  where
-    n = fromIntegral $ natVal (Proxy :: Proxy n)
-    sqrtc :: C.ArrayR Float -> C.ArrayW Float -> C.CL ()
-    sqrtc xs ys = do
-      i <- C.get_global_id 0
-      C.at ys i .= sqrt (C.at xs i)
-    sqrtSource = C.kernel sqrtc
+mulBlob = zipWithBlob' (*)
 
 divideBlob :: forall n m s. (MonadCL s m, KnownNat n) => Blob s n -> Blob s n -> m (Blob s n)
-divideBlob xs ys = do zs <- createBlob
-                      runKernel divideSource "run" [blobArg xs, blobArg ys, blobArg zs] [] [n] [1]
-                      return zs
-  where
-    n = fromIntegral $ natVal (Proxy :: Proxy n)
-    divide :: C.ArrayR Float -> C.ArrayR Float -> C.ArrayW Float -> C.CL ()
-    divide xs ys zs = do
-      i <- C.get_global_id 0
-      C.at zs i .= C.at xs i / C.at ys i
-    divideSource = C.kernel divide
+divideBlob = zipWithBlob' (/)
+
+squareBlob :: forall n m s. (MonadCL s m, KnownNat n) => Blob s n -> m (Blob s n)
+squareBlob = mapBlob' (^2)
+
+sqrtBlob :: forall n m s. (MonadCL s m, KnownNat n) => Blob s n -> m (Blob s n)
+sqrtBlob = mapBlob' sqrt
 
 catBlob :: forall m n s. (KnownNat m, KnownNat n) => Blob s m -> Blob s n -> OpenCL s (Blob s (m + n))
 catBlob (Blob xs) (Blob ys) = Blob <$> Buffer.concat [xs, ys]
@@ -208,3 +155,52 @@ splitBlob (Blob xs) = (Blob ys, Blob zs)
     n = fromIntegral $ natVal (Proxy :: Proxy n)
     ys = Buffer.slice 0 m xs
     zs = Buffer.slice m n xs
+
+mapBlob :: forall n m s. (MonadCL s m, KnownNat n) => (Expr Float -> CL (Expr Float)) -> Blob s n -> m (Blob s n)
+mapBlob f = go
+  where
+    go xs = do
+      ys <- createBlob
+      (runKernel fKernel "run"
+       [blobArg xs, blobArg ys]
+       [] [fromIntegral n] [])
+      return ys
+
+    fKernel = C.kernel fSrc
+    fSrc :: ArrayR Float -> ArrayW Float -> CL ()
+    fSrc xs ys = do i <- get_global_id 0
+                    y <- f (at xs i)
+                    at ys i .= y
+
+    n :: Int
+    n = fromIntegral $ natVal (Proxy :: Proxy n)
+
+zipWithBlob :: forall n m s. (MonadCL s m, KnownNat n)
+            => (Expr Float -> Expr Float -> CL (Expr Float))
+            -> Blob s n -> Blob s n -> m (Blob s n)
+zipWithBlob f = go
+  where
+    go xs ys = do
+      zs <- createBlob
+      (runKernel fKernel "run"
+       [blobArg xs, blobArg ys, blobArg zs]
+       [] [fromIntegral n] [])
+      return zs
+
+    fKernel = C.kernel fSrc
+    fSrc :: ArrayR Float -> ArrayR Float -> ArrayW Float -> CL ()
+    fSrc xs ys zs = do i <- get_global_id 0
+                       z <- f (at xs i) (at ys i)
+                       at zs i .= z
+
+    n :: Int
+    n = fromIntegral $ natVal (Proxy :: Proxy n)
+
+
+mapBlob' :: forall n m s. (MonadCL s m, KnownNat n) => (Expr Float -> Expr Float) -> Blob s n -> m (Blob s n)
+mapBlob' f = mapBlob (pure . f)
+
+zipWithBlob' :: forall n m s. (MonadCL s m, KnownNat n)
+            => (Expr Float -> Expr Float -> Expr Float)
+            -> Blob s n -> Blob s n -> m (Blob s n)
+zipWithBlob' f = zipWithBlob (\x y -> pure (f x y))
