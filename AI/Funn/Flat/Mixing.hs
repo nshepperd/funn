@@ -3,6 +3,8 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
+{-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
 module AI.Funn.Flat.Mixing (amixDiff) where
 
 import           GHC.TypeLits
@@ -170,33 +172,12 @@ resizeDiff = Diff run
 type Cover a b = 2^(LogCeil (Max a b))
 
 bmixDiff :: forall s a b m. (Monad m, KnownNat s, KnownNat a, KnownNat b) =>
-            Proxy s -> Diff m (Blob (s * 2^(LogCeil (Max a b)) * LogCeil (Max a b)), Blob a) (Blob b)
-bmixDiff proxy = second resizeDiff >>> sub' >>> resizeDiff
+            Proxy s -> Diff m (Blob (s * Cover a b * LogCeil (Max a b)), Blob a) (Blob b)
+bmixDiff proxy = second resizeDiff >>> sub >>> resizeDiff
   where
-    sub :: KnownNat d => Proxy d -> Diff m (Blob (s * (2^d) * d), Blob (2^d)) (Blob (2^d))
-    sub _ = mixDiff proxy
-    sub' :: (KnownNat (LogCeil (Max a b))) =>
-            Diff m (Blob (s * Cover a b * LogCeil (Max a b)), Blob (Cover a b)) (Blob (Cover a b))
-    sub' = sub (Proxy :: Proxy (LogCeil (Max a b)))
-    pa = Proxy :: Proxy a
-    pb = Proxy :: Proxy b
+    sub :: Diff m (Blob (s * Cover a b * LogCeil (Max a b)), Blob (Cover a b)) (Blob (Cover a b))
+    sub = mixDiff proxy
 
 amixDiff :: forall s a b m. (Monad m, KnownNat s, KnownNat a, KnownNat b) =>
             Proxy s -> Diff m (Blob (s * 2^(LogCeil (Max a b)) * LogCeil (Max a b) + b), Blob a) (Blob b)
-amixDiff proxy = case w of Dict -> first (splitDiff >>> swap) >>> assocR >>> second (bmixDiff proxy) >>> biasDiff
-  where
-    a = natVal (Proxy :: Proxy a)
-    b = natVal (Proxy :: Proxy b)
-    s = natVal (Proxy :: Proxy s)
-    q = let n1 = max a b
-            d = logCeil 32 n1
-        in s * 2^d * d
-    w = case someNatVal q of
-         Just (SomeNat (Proxy :: Proxy w)) -> (unsafeCoerce (Dict :: Dict (KnownNat w)) ::
-                                                  Dict (KnownNat (s * 2^(LogCeil (Max a b)) * LogCeil (Max a b))))
-
-    logCeil 0 n = 0
-    logCeil s n = case compare (2^s) n of
-                   LT -> s + 1
-                   EQ -> s
-                   GT -> logCeil (s - 1) n
+amixDiff proxy = first (splitDiff >>> swap) >>> assocR >>> second (bmixDiff proxy) >>> biasDiff
