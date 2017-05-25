@@ -78,7 +78,7 @@ clone buffer = concat [buffer]
 concat :: (MonadCL s m, Storable a) => [Buffer s a] -> m (Buffer s a)
 concat xs = do
   dst@(Buffer dst_mem _ _) <- malloc totalSize
-  for (zip offsets xs) $ \(dst_offset, Buffer src src_offset src_len) -> do
+  for_ (zip offsets xs) $ \(dst_offset, Buffer src src_offset src_len) -> do
     Mem.copy src dst_mem src_offset dst_offset src_len
   return dst
   where
