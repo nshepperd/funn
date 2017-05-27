@@ -3,7 +3,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE TemplateHaskell #-}
 module AI.Funn.CL.Flat (
   reluDiff, sigmoidDiff, tanhDiff,
   fcDiff, quadraticCost
@@ -12,43 +11,28 @@ module AI.Funn.CL.Flat (
 import           Control.Applicative
 import           Control.Monad
 import           Data.Proxy
-import qualified Data.ByteString.Char8 as C
-import           Data.FileEmbed
 import           Debug.Trace
 
 import           Control.Monad.IO.Class
 import qualified Foreign.OpenCL.Bindings as CL
 import           GHC.TypeLits
 
-import AI.Funn.SomeNat
+import           AI.Funn.SomeNat
 import           AI.Funn.CL.Blob
 import qualified AI.Funn.CL.Blob as Blob
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.Diff.Diff (Derivable(..), Diff(..))
 import           AI.Funn.CL.Code as C
 
-kSOURCE :: String
-kSOURCE = C.unpack $(embedFile "_flat.cl")
-
 reluDiff :: forall n s. (KnownNat n) => Diff (OpenCL s) (Blob s n) (Blob s n)
 reluDiff = Diff run
   where
     run xs = do
-      ys <- createBlob
-      (runKernel kSOURCE "relu"
-       [blobArg xs, blobArg ys]
-       [] [fromIntegral n] [1])
-      return (ys, backward xs)
+      ys <- relu xs
+      return (ys, reluBack xs)
 
-    backward xs dys = do
-      dxs <- createBlob
-      (runKernel kSOURCE "relu_back"
-       [blobArg xs, blobArg dys, blobArg dxs]
-       [] [fromIntegral n] [1])
-      return dxs
-
-    n :: Integer
-    n = natVal (Proxy :: Proxy n)
+    relu = mapBlob' (\x -> fmax 0 x)
+    reluBack = zipWithBlob' (\x dy -> fstep 0 x * dy)
 
 sigmoidDiff :: forall n s. (KnownNat n) => Diff (OpenCL s) (Blob s n) (Blob s n)
 sigmoidDiff = Diff run

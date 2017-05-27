@@ -8,13 +8,14 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 module AI.Funn.CL.Blob (
-  Blob, createBlob, freeBlob,
+  Blob(..), createBlob, freeBlob,
   fromList, toList,
   blobArg,
   pureBlob, scaleBlob, addBlob, subBlob,
   squareBlob, sqrtBlob, divideBlob,
   catBlob, splitBlob,
   mapBlob, zipWithBlob,
+  mapBlob', zipWithBlob',
   ) where
 
 import           Control.Applicative

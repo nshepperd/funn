@@ -213,6 +213,9 @@ fmin = function "min"
 fmax :: Expr Float -> Expr Float -> Expr Float
 fmax = function "max"
 
+fstep :: Expr Float -> Expr Float -> Expr Float
+fstep = function "step"
+
 data Mode = R | W
 newtype Array (m :: Mode) a = Array AST.Name
 type ArrayR = Array R
