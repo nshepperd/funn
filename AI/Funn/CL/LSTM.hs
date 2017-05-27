@@ -11,11 +11,7 @@ module AI.Funn.CL.LSTM (lstmDiff) where
 import           Control.Applicative
 import           Control.Monad
 import           Data.Proxy
-import qualified Data.ByteString.Char8 as C
-import           Data.FileEmbed
 
-import           Control.Monad.IO.Class
-import qualified Foreign.OpenCL.Bindings as CL
 import           GHC.TypeLits
 
 import           AI.Funn.SomeNat
