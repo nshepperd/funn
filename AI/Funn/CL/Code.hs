@@ -135,6 +135,9 @@ v .= e = liftF (Assign v e ())
 
 -- Embedding literals
 
+operator :: String -> Expr a -> Expr a -> Expr a
+operator op (Expr a) (Expr b) = Expr (AST.ExprOp a op b)
+
 class Literal a where
   literal :: a -> Expr a
 
@@ -146,24 +149,40 @@ instance Num (Expr Int) where
   abs = function "abs"
   signum = function "sign"
   negate n = 0 - n
-  (+) (Expr a) (Expr b) = Expr $ AST.ExprOp a "+" b
-  (-) (Expr a) (Expr b) = Expr $ AST.ExprOp a "-" b
-  (*) (Expr a) (Expr b) = Expr $ AST.ExprOp a "*" b
+  (+) = operator "+"
+  (-) = operator "-"
+  (*) = operator "*"
+
+class Bitwise a where
+  (.&.) :: a -> a -> a
+  (.|.) :: a -> a -> a
+  xor :: a -> a -> a
+
+instance Bitwise (Expr Int) where
+  (.&.) = operator "&"
+  (.|.) = operator "|"
+  xor = operator "^"
+
+shiftL :: Expr Int -> Expr Int -> Expr Int
+shiftL = operator "<<"
+
+shiftR :: Expr Int -> Expr Int -> Expr Int
+shiftR = operator ">>"
 
 instance Literal Float where
-  literal n = Expr $ AST.ExprLit (show n)
+  literal n = Expr $ AST.ExprLit (show n ++ "f")
 
 instance Num (Expr Float) where
   fromInteger n = literal (fromInteger n)
   abs = function "fabs"
   signum = function "sign"
   negate n = 0 - n
-  (+) (Expr a) (Expr b) = Expr $ AST.ExprOp a "+" b
-  (-) (Expr a) (Expr b) = Expr $ AST.ExprOp a "-" b
-  (*) (Expr a) (Expr b) = Expr $ AST.ExprOp a "*" b
+  (+) = operator "+"
+  (-) = operator "-"
+  (*) = operator "*"
 
 instance Fractional (Expr Float) where
-  (/) (Expr a) (Expr b) = Expr $ AST.ExprOp a "/" b
+  (/) = operator "/"
   recip a = 1 / a
   fromRational x = fromInteger (numerator x) / fromInteger (denominator x)
 
@@ -238,9 +257,3 @@ at (Array name) (Expr i) = Expr (AST.ExprIndex (name ++ "_base") index)
   where
     offset = AST.ExprVar (name ++ "_offset")
     index = AST.ExprOp offset "+" i
-
-foo :: Array W Float -> CL ()
-foo arr = do x <- initvar 0
-             forEach 0 10 $ \i -> do
-               (arr `at` i) .= x
-               x .= fmin (x + 1) 5
