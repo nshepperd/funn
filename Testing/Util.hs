@@ -36,15 +36,22 @@ linear xb = Diff run
                return (c, backward)
     backward δ = scale δ xb
 
+minus :: (Monad m, VectorSpace m Double a) => a -> a -> m a
+minus a b = plus a =<< scale (-1) b
+
 measure :: (Show a, Monad m, Inner m Double a, D a ~ a)
         => Diff m a Double -> a -> a -> m DiffProp
 measure diff a δa =
-  do (l, k) <- runDiff diff a
+  do (lc, k) <- runDiff diff a
      dL_da <- k 1
-     δL_backprop <- δa `inner` dL_da
-     l' <- Diff.runDiffForward diff =<< (a `plus` δa)
-     let δL_finite = l' - l
-     return (DiffProp l δL_finite δL_backprop
+     ar <- plus a δa
+     al <- minus a δa
+     δa_true <- minus ar al
+     δL_backprop <- δa_true `inner` dL_da
+     l1 <- Diff.runDiffForward diff ar
+     l2 <- Diff.runDiffForward diff al
+     let δL_finite = l1 - l2
+     return (DiffProp lc δL_finite δL_backprop
              (abs (δL_backprop - δL_finite) / 2)
              ((abs δL_backprop + abs δL_finite) / 2)
              )
