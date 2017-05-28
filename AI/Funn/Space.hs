@@ -8,6 +8,23 @@ module AI.Funn.Space where
 import Control.Applicative
 import Data.Foldable
 import Data.Functor.Identity
+import GHC.Float
+import Foreign.Storable
+
+class Storable a => Floats a where
+  toDouble :: a -> Double
+  fromDouble :: Double -> a
+
+convertFloat :: (Floats a, Floats b) => a -> b
+convertFloat = fromDouble . toDouble
+
+instance Floats Double where
+  toDouble = id
+  fromDouble = id
+
+instance Floats Float where
+  toDouble = float2Double
+  fromDouble = double2Float
 
 class Zero m a where
   zero :: m a

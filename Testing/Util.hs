@@ -96,7 +96,7 @@ checkGradientI :: (Finite Identity Double a, D a ~ a,
                    Arbitrary a, Arbitrary b,
                    Show a, Show b)
                => Diff Identity a b -> Property
-checkGradientI = checkGradient 1e8 0.01 0.00001 runIdentity
+checkGradientI = checkGradient 1e8 0.001 1e-4 runIdentity
 
 putR :: Applicative m => b -> Diff m a (a, b)
 putR b = Diff run

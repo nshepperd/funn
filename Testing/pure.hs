@@ -66,7 +66,7 @@ prop_softmaxcost :: Property
 prop_softmaxcost = checkGradientI (putR 0 >>> softmaxCost @Identity @3)
 
 prop_lstmdiff :: Property
-prop_lstmdiff = checkGradientI (lstmDiff @10)
+prop_lstmdiff = checkGradientI (lstmDiff @2)
 
 prop_amixdiff :: Property
 prop_amixdiff = checkGradientI (amixDiff @3 @3 @4 Proxy)

@@ -8,6 +8,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 import Prelude hiding (id)
 import           Control.Category ((>>>), id)
@@ -24,7 +25,7 @@ import           Unsafe.Coerce
 import           AI.Funn.Diff.Diff (Diff(..), Derivable(..), runDiffForward)
 import qualified AI.Funn.Diff.Diff as Diff
 import           AI.Funn.CL.MonadCL
-import           AI.Funn.CL.Blob (Blob)
+import           AI.Funn.CL.Blob
 import qualified AI.Funn.CL.Blob as Blob
 import qualified AI.Funn.CL.Buffer as Buffer
 import           AI.Funn.CL.Flat
@@ -41,40 +42,46 @@ clProperty :: OpenCL Global Property -> Property
 clProperty clProp = ioProperty (runOpenCLGlobal clProp)
 
 -- Looser bounds for OpenCL as we are single precision.
-checkGradientCL :: (Finite (OpenCL Global) Double a, D a ~ a,
-                    Finite (OpenCL Global) Double b, D b ~ b,
-                    Arbitrary a, Arbitrary b,
-                    Show a, Show b,
-                    Loadable a a',
-                    Loadable b b'
-                   )
-               => Diff (OpenCL Global) a' b' -> Property
-checkGradientCL diff = checkGradient 1e5 0.05 0.005 clProperty (fromCPU >>> diff >>> fromGPU)
+checkGradientCL :: (Loadable a n1, D a ~ a,
+                    Loadable b n2, D b ~ b)
+               => Diff (OpenCL Global) a b -> Property
+checkGradientCL diff = checkGradient 1e8 0.001 1e-4 clProperty (fromCPUDiff >>> diff >>> fromGPUDiff)
 
-class Loadable x y | x -> y, y -> x where
-  fromCPU :: Diff (OpenCL Global) x y
-  fromGPU :: Diff (OpenCL Global) y x
+fromCPUDiff :: (Loadable a n, Loadable (D a) n) => Diff (OpenCL Global) (C.Blob n) a
+fromCPUDiff = Diff run
+  where
+    run a = do x <- fromCPU a
+               return (x, backward)
+    backward b = fromGPU b
 
-instance Loadable Double Double where
-  fromCPU = id
-  fromGPU = id
+fromGPUDiff :: (Loadable a n, Loadable (D a) n) => Diff (OpenCL Global) a (C.Blob n)
+fromGPUDiff = Diff run
+  where
+    run a = do x <- fromGPU a
+               return (x, backward)
+    backward b = fromCPU b
 
-instance (KnownNat n) => Loadable (C.Blob n) (Blob Global n) where
-  fromCPU = Diff run
+class KnownNat n => Loadable x n | x -> n where
+  fromCPU :: C.Blob n -> OpenCL Global x
+  fromGPU :: x -> OpenCL Global (C.Blob n)
+
+instance Loadable Double 1 where
+  fromCPU b = pure (head (C.toList b))
+  fromGPU x = pure (C.fromList [x])
+
+instance (KnownNat n) => Loadable (BlobF Global n) n where
+  fromCPU a = Blob.fromList (C.toList a)
+  fromGPU a = C.fromList <$> Blob.toList a
+
+instance (KnownNat n) => Loadable (BlobD Global n) n where
+  fromCPU a = Blob.fromList (C.toList a)
+  fromGPU a = C.fromList <$> Blob.toList a
+
+instance (KnownNat m, Loadable a n1, Loadable b n2, m ~ (n1 + n2)) => Loadable (a, b) m where
+  fromCPU ab = (,) <$> fromCPU a <*> fromCPU b
     where
-      run a = do b <- Blob.fromList (C.toList a)
-                 return (b, backward)
-      backward db = C.fromList <$> Blob.toList db
-
-  fromGPU = Diff run
-    where
-      run a = do b <- C.fromList <$> Blob.toList a
-                 return (b, backward)
-      backward db = Blob.fromList (C.toList db)
-
-instance (Loadable a a1, Loadable b b1) => Loadable (a, b) (a1, b1) where
-  fromCPU = Diff.first fromCPU >>> Diff.second fromCPU
-  fromGPU = Diff.first fromGPU >>> Diff.second fromGPU
+      (a, b) = C.split ab
+  fromGPU (a, b) = C.cat <$> fromGPU a <*> fromGPU b
 
 -- Buffer properties.
 
@@ -107,13 +114,20 @@ prop_Buffer_slice = monadic clProperty $ do
 
 -- Blob properties.
 
-pickBlob :: (KnownNat n) => PropertyM (OpenCL Global) (Blob Global n)
-pickBlob = lift . runDiffForward fromCPU =<< pick arbitrary
+pickBlob :: (KnownNat n) => PropertyM (OpenCL Global) (BlobD Global n)
+pickBlob = lift . fromCPU =<< pick arbitrary
 
-assertEqual :: (KnownNat n) => Blob Global n -> Blob Global n -> PropertyM (OpenCL Global) ()
-assertEqual one two = do one_c <- lift (runDiffForward fromGPU one)
-                         two_c <- lift (runDiffForward fromGPU two)
+assertEqual :: (KnownNat n) => BlobD Global n -> BlobD Global n -> PropertyM (OpenCL Global) ()
+assertEqual one two = do one_c <- lift (fromGPU one)
+                         two_c <- lift (fromGPU two)
                          stop (one_c === two_c)
+
+prop_Blob_sub_zero :: Property
+prop_Blob_sub_zero = monadic clProperty $ do
+  xs <- pickBlob @10
+  z <- lift zero
+  ys <- lift (subBlob xs z)
+  assertEqual xs ys
 
 prop_Blob_plus_zero :: Property
 prop_Blob_plus_zero = monadic clProperty $ do
@@ -135,9 +149,9 @@ prop_Blob_plus = monadic clProperty $ do
   xs <- pickBlob @10
   ys <- pickBlob @10
   z1 <- lift (plus xs ys)
-  xs_c <- lift (runDiffForward fromGPU xs)
-  ys_c <- lift (runDiffForward fromGPU ys)
-  z2 <- lift (runDiffForward fromCPU =<< plus xs_c ys_c)
+  xs_c <- lift (fromGPU xs)
+  ys_c <- lift (fromGPU ys)
+  z2 <- lift (fromCPU =<< plus xs_c ys_c)
   assertEqual z1 z2
 
 prop_Blob_plusm :: Property
@@ -159,25 +173,25 @@ prop_Blob_split = monadic clProperty $ do
 -- OpenCL flat diff
 
 prop_fcdiff :: Property
-prop_fcdiff = checkGradientCL (fcDiff @2 @2)
+prop_fcdiff = checkGradientCL (fcDiff @2 @2 @Double)
 
 prop_reludiff :: Property
-prop_reludiff = checkGradientCL (reluDiff @5)
+prop_reludiff = checkGradientCL (reluDiff @5 @Double)
 
 prop_sigmoiddiff :: Property
-prop_sigmoiddiff = checkGradientCL (sigmoidDiff @2)
+prop_sigmoiddiff = checkGradientCL (sigmoidDiff @3 @Double)
 
 prop_tanhdiff :: Property
-prop_tanhdiff = checkGradientCL (tanhDiff @1)
+prop_tanhdiff = checkGradientCL (tanhDiff @3 @Double)
 
 prop_quadraticcost :: Property
-prop_quadraticcost = checkGradientCL (quadraticCost @5)
+prop_quadraticcost = checkGradientCL (quadraticCost @5 @Double)
 
 prop_lstmdiff :: Property
-prop_lstmdiff = checkGradientCL (lstmDiff @2)
+prop_lstmdiff = checkGradientCL (lstmDiff @2 @Double)
 
 prop_mixdiff :: Property
-prop_mixdiff = checkGradientCL (mixDiff @3 @2 Proxy)
+prop_mixdiff = checkGradientCL (mixDiff @3 @2 @Double Proxy)
 
 -- Make TemplateHaskell aware of above definitions.
 $(return [])

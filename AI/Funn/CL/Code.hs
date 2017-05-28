@@ -1,12 +1,14 @@
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 module AI.Funn.CL.Code where
 
@@ -18,6 +20,7 @@ import Data.Monoid
 import Data.Traversable
 import Data.Ratio
 import Foreign.Ptr
+import Foreign.Storable
 
 import qualified AI.Funn.CL.AST as AST
 
@@ -32,6 +35,9 @@ instance Variable Int where
 
 instance Variable Float where
   declare (Var name) = AST.Decl "float" name
+
+instance Variable Double where
+  declare (Var name) = AST.Decl "double" name
 
   -- OpenCL Functions
   -- Argument types
@@ -172,7 +178,19 @@ shiftR = operator ">>"
 instance Literal Float where
   literal n = Expr $ AST.ExprLit (show n ++ "f")
 
+instance Literal Double where
+  literal n = Expr $ AST.ExprLit (show n)
+
 instance Num (Expr Float) where
+  fromInteger n = literal (fromInteger n)
+  abs = function "fabs"
+  signum = function "sign"
+  negate n = 0 - n
+  (+) = operator "+"
+  (-) = operator "-"
+  (*) = operator "*"
+
+instance Num (Expr Double) where
   fromInteger n = literal (fromInteger n)
   abs = function "fabs"
   signum = function "sign"
@@ -186,11 +204,42 @@ instance Fractional (Expr Float) where
   recip a = 1 / a
   fromRational x = fromInteger (numerator x) / fromInteger (denominator x)
 
+instance Fractional (Expr Double) where
+  (/) = operator "/"
+  recip a = 1 / a
+  fromRational x = fromInteger (numerator x) / fromInteger (denominator x)
+
+type CLNum a = (Storable a, Num (Expr a), Literal a, Variable a, Argument (Array W a), Argument (Array R a))
+type CLFractional a = (Storable a, Fractional (Expr a), Literal a,
+                       Variable a, Argument (Array W a), Argument (Array R a))
+type CLFloating a = (Storable a, Floating (Expr a), Literal a,
+                      Variable a, Argument (Array W a), Argument (Array R a))
+
 constant :: String -> Expr a
 constant name = Expr (AST.ExprLit name)
 
 instance Floating (Expr Float) where
   pi = constant "M_PI_F"
+  exp = function "exp"
+  log = function "log"
+  sqrt = function "sqrt"
+  (**) = function "pow"
+  logBase b e = log e / log b
+  sin = function "sin"
+  cos = function "cos"
+  tan = function "tan"
+  asin = function "asin"
+  acos = function "acos"
+  atan = function "atan"
+  sinh = function "sinh"
+  cosh = function "cosh"
+  tanh = function "tanh"
+  asinh = function "asinh"
+  acosh = function "acosh"
+  atanh = function "atanh"
+
+instance Floating (Expr Double) where
+  pi = constant "M_PI"
   exp = function "exp"
   log = function "log"
   sqrt = function "sqrt"
@@ -226,14 +275,20 @@ function name = function_ name []
 get_global_id :: Expr Int -> CL (Expr Int)
 get_global_id i = eval (function "get_global_id" i)
 
-fmin :: Expr Float -> Expr Float -> Expr Float
-fmin = function "min"
+class Relational a where
+  fmin :: Expr a -> Expr a -> Expr a
+  fmax :: Expr a -> Expr a -> Expr a
+  fstep :: Expr a -> Expr a -> Expr a
 
-fmax :: Expr Float -> Expr Float -> Expr Float
-fmax = function "max"
+instance Relational Float where
+  fmin = function "min"
+  fmax = function "max"
+  fstep = function "step"
 
-fstep :: Expr Float -> Expr Float -> Expr Float
-fstep = function "step"
+instance Relational Double where
+  fmin = function "min"
+  fmax = function "max"
+  fstep = function "step"
 
 data Mode = R | W
 newtype Array (m :: Mode) a = Array AST.Name
@@ -250,6 +305,18 @@ instance Argument (Array W Float) where
   declareArgument argName = (Array argName, [base, offset])
     where
       base = AST.Decl "__global float*" (argName ++ "_base")
+      offset = AST.Decl "const int" (argName ++ "_offset")
+
+instance Argument (Array R Double) where
+  declareArgument argName = (Array argName, [base, offset])
+    where
+      base = AST.Decl "__global const double*" (argName ++ "_base")
+      offset = AST.Decl "const int" (argName ++ "_offset")
+
+instance Argument (Array W Double) where
+  declareArgument argName = (Array argName, [base, offset])
+    where
+      base = AST.Decl "__global double*" (argName ++ "_base")
       offset = AST.Decl "const int" (argName ++ "_offset")
 
 at :: Array m a -> Expr Int -> Expr a

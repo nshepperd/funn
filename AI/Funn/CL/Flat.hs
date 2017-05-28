@@ -18,13 +18,14 @@ import qualified Foreign.OpenCL.Bindings as CL
 import           GHC.TypeLits
 
 import           AI.Funn.SomeNat
+import           AI.Funn.Space
 import           AI.Funn.CL.Blob
 import qualified AI.Funn.CL.Blob as Blob
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.Diff.Diff (Derivable(..), Diff(..))
 import           AI.Funn.CL.Code as C
 
-reluDiff :: forall n s. (KnownNat n) => Diff (OpenCL s) (Blob s n) (Blob s n)
+reluDiff :: forall n a s. (KnownNat n, Relational a, CLNum a) => Diff (OpenCL s) (Blob s n a) (Blob s n a)
 reluDiff = Diff run
   where
     run xs = do
@@ -34,7 +35,7 @@ reluDiff = Diff run
     relu = mapBlob' (\x -> fmax 0 x)
     reluBack = zipWithBlob' (\x dy -> fstep 0 x * dy)
 
-sigmoidDiff :: forall n s. (KnownNat n) => Diff (OpenCL s) (Blob s n) (Blob s n)
+sigmoidDiff :: forall n a s. (KnownNat n, CLFloating a) => Diff (OpenCL s) (Blob s n a) (Blob s n a)
 sigmoidDiff = Diff run
   where
     run xs = do
@@ -49,7 +50,7 @@ sigmoidDiff = Diff run
       z <- eval $ exp (-abs x)
       return $ dy * z / (1 + z)^2
 
-tanhDiff :: forall n s. (KnownNat n) => Diff (OpenCL s) (Blob s n) (Blob s n)
+tanhDiff :: forall n a s. (KnownNat n, CLFloating a) => Diff (OpenCL s) (Blob s n a) (Blob s n a)
 tanhDiff = Diff run
   where
     run xs = do
@@ -67,7 +68,7 @@ tanhDiff = Diff run
       z <- eval $ 2 / (zp + zm)
       return $ dy * z^2
 
-quadraticCost :: forall n s. (KnownNat n) => Diff (OpenCL s) (Blob s n, Blob s n) Double
+quadraticCost :: forall n a s. (KnownNat n, CLNum a, Floats a) => Diff (OpenCL s) (Blob s n a, Blob s n a) Double
 quadraticCost = Diff run
   where
     run (xs, ys) = do
@@ -81,8 +82,8 @@ quadraticCost = Diff run
       dy <- scaleBlob (-2 * δ) ds
       return (dx, dy)
 
-fcDiff :: forall α β m s. (MonadCL s m, KnownNat α, KnownNat β) =>
-          Diff m (Blob s (α * β + β), Blob s α) (Blob s β)
+fcDiff :: forall α β a m s. (MonadCL s m, KnownNat α, KnownNat β, CLNum a) =>
+          Diff m (Blob s (α * β + β) a, Blob s α a) (Blob s β a)
 fcDiff = Diff run
   where
     run (pars, xs) = do
@@ -92,12 +93,12 @@ fcDiff = Diff run
        [] [β] [1])
       return (ys, backward pars xs)
 
-    backward :: Blob s (α * β + β) -> Blob s α -> Blob s β ->
-                m (Blob s (α * β + β), Blob s α)
+    backward :: Blob s (α * β + β) a -> Blob s α a -> Blob s β a ->
+                m (Blob s (α * β + β) a, Blob s α a)
     backward pars xs dys = do
       dpars <- createBlob
       dxs <- createBlob
-      let (dws :: Blob s (α * β), dbs :: Blob s β) = splitBlob dpars
+      let (dws :: Blob s (α * β) a, dbs :: Blob s β a) = splitBlob dpars
       (runKernel backwardwsK "run"
        [int32Arg α, blobArg xs, blobArg dys, blobArg dws]
        [] [α, β] [1, 1])
@@ -109,7 +110,7 @@ fcDiff = Diff run
        [] [β] [1])
       return (dpars, dxs)
 
-    kahan :: Expr Float -> (Expr Int -> Expr Float) -> Expr Int -> CL (Expr Float)
+    kahan :: Expr a -> (Expr Int -> Expr a) -> Expr Int -> CL (Expr a)
     kahan initial inputs count = do
       total <- eval initial
       comp <- eval 0
@@ -122,7 +123,7 @@ fcDiff = Diff run
       return total
 
     forwardK = C.kernel forwardSrc
-    forwardSrc :: Expr Int -> Expr Int -> ArrayR Float -> ArrayR Float -> ArrayW Float -> CL ()
+    forwardSrc :: Expr Int -> Expr Int -> ArrayR a -> ArrayR a -> ArrayW a -> CL ()
     forwardSrc α β pars xs ys = do
       y <- get_global_id 0
       let
@@ -131,14 +132,14 @@ fcDiff = Diff run
       at ys y .= total
 
     backwardwsK = C.kernel backwardwsSrc
-    backwardwsSrc :: Expr Int -> ArrayR Float -> ArrayR Float -> ArrayW Float -> CL ()
+    backwardwsSrc :: Expr Int -> ArrayR a -> ArrayR a -> ArrayW a -> CL ()
     backwardwsSrc α xs dys dws = do
       x <- get_global_id 0
       y <- get_global_id 1
       at dws (y * α + x) .= (xs `at` x) * (dys `at` y)
 
     backwardxsK = C.kernel backwardxsSrc
-    backwardxsSrc :: Expr Int -> Expr Int -> ArrayR Float -> ArrayR Float -> ArrayW Float -> CL ()
+    backwardxsSrc :: Expr Int -> Expr Int -> ArrayR a -> ArrayR a -> ArrayW a -> CL ()
     backwardxsSrc α β pars dys dxs = do
       x <- get_global_id 0
       let
@@ -147,7 +148,7 @@ fcDiff = Diff run
       at dxs x .= total
 
     backwardbsK = C.kernel backwardbsSrc
-    backwardbsSrc :: ArrayR Float -> ArrayW Float -> CL ()
+    backwardbsSrc :: ArrayR a -> ArrayW a -> CL ()
     backwardbsSrc dys dbs = do
       y <- get_global_id 0
       at dbs y .= at dys y

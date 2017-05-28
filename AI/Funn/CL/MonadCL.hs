@@ -134,7 +134,7 @@ instance Monoid (KernelArg s) where
 doubleArg :: Double -> KernelArg s
 doubleArg x = KernelArg run
   where
-    run f = f [CL.VArg (double2Float x)]
+    run f = f [CL.VArg x]
 
 int32Arg :: Integral a => a -> KernelArg s
 int32Arg a = KernelArg run
