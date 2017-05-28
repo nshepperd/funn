@@ -29,6 +29,7 @@ import qualified AI.Funn.CL.Blob as Blob
 import qualified AI.Funn.CL.Buffer as Buffer
 import           AI.Funn.CL.Flat
 import           AI.Funn.CL.LSTM
+import           AI.Funn.CL.Mixing
 import qualified AI.Funn.Flat.Blob as C
 import           AI.Funn.Space
 
@@ -175,7 +176,8 @@ prop_quadraticcost = checkGradientCL (quadraticCost @5)
 prop_lstmdiff :: Property
 prop_lstmdiff = checkGradientCL (lstmDiff @2)
 
-
+prop_mixdiff :: Property
+prop_mixdiff = checkGradientCL (mixDiff @3 @2 Proxy)
 
 -- Make TemplateHaskell aware of above definitions.
 $(return [])
