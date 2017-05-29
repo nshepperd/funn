@@ -91,14 +91,15 @@ fcDiff = Diff run
       (runKernel forwardK "run"
        [int32Arg α, int32Arg β, blobArg pars, blobArg xs, blobArg ys]
        [] [β] [1])
-      return (ys, backward pars xs)
+      frozen_ys <- unsafeFreeze ys
+      return (frozen_ys, backward pars xs)
 
     backward :: Blob s (α * β + β) a -> Blob s α a -> Blob s β a ->
                 m (Blob s (α * β + β) a, Blob s α a)
     backward pars xs dys = do
       dpars <- createBlob
       dxs <- createBlob
-      let (dws :: Blob s (α * β) a, dbs :: Blob s β a) = splitBlob dpars
+      let (dws :: MBlob s (α * β) a, dbs :: MBlob s β a) = splitBlob dpars
       (runKernel backwardwsK "run"
        [int32Arg α, blobArg xs, blobArg dys, blobArg dws]
        [] [α, β] [1, 1])
@@ -108,7 +109,9 @@ fcDiff = Diff run
       (runKernel backwardbsK "run"
        [blobArg dys, blobArg dbs]
        [] [β] [1])
-      return (dpars, dxs)
+      frozen_dpars <- unsafeFreeze dpars
+      frozen_dxs <- unsafeFreeze dxs
+      return (frozen_dpars, frozen_dxs)
 
     kahan :: Expr a -> (Expr Int -> Expr a) -> Expr Int -> CL (Expr a)
     kahan initial inputs count = do

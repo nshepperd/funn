@@ -28,13 +28,16 @@ lstmDiff :: forall n a s. (KnownNat n, CLNum a)
 lstmDiff = Diff run
   where
     run (ws, (cs, xs)) = do
-      (store :: BlobF s (8 * n)) <- createBlob @ (8 * n)
+      (store :: MBlob s (8 * n) Double) <- createBlob @ (8 * n)
       new_cs <- createBlob
       ys <- createBlob
       (runKernel forwardSrc "run"
        [blobArg ws, blobArg cs, blobArg xs, blobArg store, blobArg new_cs, blobArg ys]
-       [] [fromIntegral n] [1])
-      return ((new_cs, ys), backward ws store)
+       [] [fromIntegral n] [])
+      frozen_store <- unsafeFreeze store
+      frozen_new_cs <- unsafeFreeze new_cs
+      frozen_ys <- unsafeFreeze ys
+      return ((frozen_new_cs, frozen_ys), backward ws frozen_store)
 
     backward ws store (dcs', dys) = do
       dws <- createBlob
@@ -43,9 +46,12 @@ lstmDiff = Diff run
       (runKernel backwardSrc "run"
        [blobArg ws, blobArg store, blobArg dcs', blobArg dys,
         blobArg dws, blobArg dcs, blobArg dxs]
-       [] [fromIntegral n] [1])
+       [] [fromIntegral n] [])
 
-      return (dws, (dcs, dxs))
+      frozen_dws <- unsafeFreeze dws
+      frozen_dcs <- unsafeFreeze dcs
+      frozen_dxs <- unsafeFreeze dxs
+      return (frozen_dws, (frozen_dcs, frozen_dxs))
 
 
     forwardSrc = C.kernel forwardKernel

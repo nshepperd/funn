@@ -8,8 +8,10 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 module AI.Funn.CL.Blob (
-  Blob(..), BlobF, BlobD,
+  BlobT(..), Blob, MBlob,
   createBlob, freeBlob,
+  freeze, unsafeFreeze,
+  thaw, unsafeThaw,
   fromList, toList,
   blobArg,
   pureBlob, scaleBlob, addBlob, subBlob,
@@ -44,9 +46,11 @@ import           AI.Funn.Space
 
 import           AI.Funn.CL.Code as C
 
-newtype Blob s (n :: Nat) a = Blob (Buffer s a)
-type BlobF s n = Blob s n Float
-type BlobD s n = Blob s n Double
+data Mutable = I | M deriving (Show, Eq)
+
+newtype BlobT (q :: Mutable) s (n :: Nat) a = Blob (Buffer s a)
+type Blob = BlobT I
+type MBlob = BlobT M
 
 -- Classes --
 
@@ -78,38 +82,50 @@ instance (MonadCL s m, KnownNat n, Floats a, CLNum a) => Finite m Double (Blob s
 
 -- Main operations --
 
-freeBlob :: Blob s n a -> OpenCL s ()
+freeBlob :: BlobT q s n a -> OpenCL s ()
 freeBlob (Blob mem) = Buffer.free mem
 
-createBlob :: forall n m s a. (MonadCL s m, KnownNat n, Storable a) => m (Blob s n a)
+createBlob :: forall n m s a. (MonadCL s m, KnownNat n, Storable a) => m (MBlob s n a)
 createBlob = Blob <$> Buffer.malloc (fromIntegral n)
   where
     n = natVal (Proxy :: Proxy n)
 
-fromList :: forall n m s a. (MonadCL s m, KnownNat n, Floats a) => [Double] -> m (Blob s n a)
+fromList :: forall n a m s q. (MonadCL s m, KnownNat n, Floats a) => [Double] -> m (BlobT q s n a)
 fromList xs = do when (n /= genericLength xs) $ liftIO $ do
                    throwIO (IndexOutOfBounds "Blob.fromList")
                  Blob <$> Buffer.fromList (map fromDouble xs)
   where
     n = natVal (Proxy :: Proxy n)
 
-toList :: (MonadCL s m, Floats a) => Blob s n a -> m [Double]
+toList :: (MonadCL s m, Floats a) => BlobT q s n a -> m [Double]
 toList (Blob mem) = map toDouble <$> Buffer.toList mem
 
-blobArg :: Blob s n a -> KernelArg s
+blobArg :: BlobT q s n a -> KernelArg s
 blobArg (Blob mem) = Buffer.arg mem
+
+freeze :: (MonadCL s m, Storable a) => MBlob s n a -> m (Blob s n a)
+freeze (Blob mem) = Blob <$> Buffer.clone mem
+
+unsafeFreeze :: (MonadCL s m, Storable a) => MBlob s n a -> m (Blob s n a)
+unsafeFreeze (Blob mem) = pure (Blob mem)
+
+thaw :: (MonadCL s m, Storable a) => Blob s n a -> m (MBlob s n a)
+thaw (Blob mem) = Blob <$> Buffer.clone mem
+
+unsafeThaw :: (MonadCL s m, Storable a) => Blob s n a -> m (MBlob s n a)
+unsafeThaw (Blob mem) = pure (Blob mem)
 
 -- Arithmetic operations --
 
-pureBlob :: forall n m s a. (MonadCL s m, KnownNat n, Floats a) => Double -> m (Blob s n a)
+pureBlob :: forall n a q m s. (MonadCL s m, KnownNat n, Floats a) => Double -> m (BlobT q s n a)
 pureBlob x = Blob <$> Buffer.fromVector (S.replicate n (fromDouble x))
   where
     n = fromIntegral $ natVal (Proxy :: Proxy n)
 
-scaleBlob :: forall n m s a. (MonadCL s m, KnownNat n, Floats a, CLNum a) => Double -> Blob s n a -> m (Blob s n a)
+scaleBlob :: forall n a m s. (MonadCL s m, KnownNat n, Floats a, CLNum a) => Double -> Blob s n a -> m (Blob s n a)
 scaleBlob a xs = do ys <- createBlob
                     runKernel scaleSource "run" [doubleArg a, blobArg xs, blobArg ys] [] [n] [1]
-                    return ys
+                    unsafeFreeze ys
   where
     n = fromIntegral $ natVal (Proxy :: Proxy n)
     scale :: Expr Double -> ArrayR a -> ArrayW a -> CL ()
@@ -153,10 +169,10 @@ squareBlob = mapBlob' (^2)
 sqrtBlob :: forall n m s a. (MonadCL s m, KnownNat n, CLFloating a) => Blob s n a -> m (Blob s n a)
 sqrtBlob = mapBlob' sqrt
 
-catBlob :: forall m n s a. (KnownNat m, KnownNat n, Storable a) => Blob s m a -> Blob s n a -> OpenCL s (Blob s (m + n) a)
+catBlob :: forall m n s a q. (KnownNat m, KnownNat n, Storable a) => BlobT q s m a -> BlobT q s n a -> OpenCL s (BlobT q s (m + n) a)
 catBlob (Blob xs) (Blob ys) = Blob <$> Buffer.concat [xs, ys]
 
-splitBlob :: forall m n s a. (KnownNat m, KnownNat n) => Blob s (m + n) a -> (Blob s m a, Blob s n a)
+splitBlob :: forall m n s a q. (KnownNat m, KnownNat n) => BlobT q s (m + n) a -> (BlobT q s m a, BlobT q s n a)
 splitBlob (Blob xs) = (Blob ys, Blob zs)
   where
     m = fromIntegral $ natVal (Proxy :: Proxy m)
@@ -175,7 +191,7 @@ mapBlob f = go
       (runKernel fKernel "run"
        [blobArg xs, blobArg ys]
        [] [fromIntegral n] [])
-      return ys
+      unsafeFreeze ys
 
     fKernel = C.kernel fSrc
     fSrc :: ArrayR a -> ArrayW a -> CL ()
@@ -197,7 +213,7 @@ zipWithBlob f = go
       (runKernel fKernel "run"
        [blobArg xs, blobArg ys, blobArg zs]
        [] [fromIntegral n] [])
-      return zs
+      unsafeFreeze zs
 
     fKernel = C.kernel fSrc
     fSrc :: ArrayR a -> ArrayR a -> ArrayW a -> CL ()

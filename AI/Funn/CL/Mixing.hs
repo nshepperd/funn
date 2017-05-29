@@ -18,13 +18,14 @@ import           Data.List
 import           Data.Traversable
 import           GHC.TypeLits
 
-import           AI.Funn.SomeNat
 import           AI.Funn.CL.Blob
 import qualified AI.Funn.CL.Blob as Blob
 import qualified AI.Funn.CL.Buffer as Buffer
+import           AI.Funn.CL.Code as C
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.Diff.Diff (Derivable(..), Diff(..))
-import           AI.Funn.CL.Code as C
+import           AI.Funn.NatLog
+import           AI.Funn.SomeNat
 
 crossf :: Expr Int -> Expr Int -> Expr Int -> Expr Int -> Expr Int
 crossf n d l s = (n-1) .&. (part1 .|. part2)
@@ -51,9 +52,10 @@ mixDiff proxy = Diff run
       dpars <- createBlob
       let dsliced = slicePars dpars
       di <- execStateT (traverseBack_ go_backward (zip4 [0..] xs sliced dsliced)) dout
-      return (dpars, di)
+      frozen_dpars <- unsafeFreeze dpars
+      return (frozen_dpars, di)
 
-    slicePars :: Blob s (k * (2^d) * d) a -> [Blob s (k * (2^d)) a]
+    slicePars :: BlobT q s (k * (2^d) * d) a -> [BlobT q s (k * (2^d)) a]
     slicePars (Blob buffer) = [Blob (Buffer.slice (k*n*l) (k*n) buffer) | l <- [0..d-1]]
 
     k,d,n :: Int
@@ -68,10 +70,11 @@ mixDiff proxy = Diff run
       lift (runKernel forwardSrc "run"
             [int32Arg n, int32Arg d, int32Arg l, int32Arg k, blobArg par, blobArg xs, blobArg ys]
             [] [fromIntegral n] [])
-      put ys
+      frozen_ys <- lift (unsafeFreeze ys)
+      put frozen_ys
       return xs
 
-    go_backward :: (Int, Blob s (2^d) a, Blob s (k * (2^d)) a, Blob s (k * (2^d)) a)
+    go_backward :: (Int, Blob s (2^d) a, Blob s (k * (2^d)) a, MBlob s (k * (2^d)) a)
                 -> StateT (Blob s (2^d) a) m ()
     go_backward (l,xs,par,dpar) = do
       dys <- get
@@ -83,7 +86,8 @@ mixDiff proxy = Diff run
         (runKernel backwardParSrc "run"
          [int32Arg n, int32Arg d, int32Arg l, int32Arg k, blobArg xs, blobArg dys, blobArg dpar]
          [] [fromIntegral n, fromIntegral k] [])
-      put dxs
+      frozen_dxs <- lift (unsafeFreeze dxs)
+      put frozen_dxs
 
     forwardSrc :: String
     forwardSrc = C.kernel forwardKernel
