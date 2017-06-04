@@ -45,6 +45,7 @@ import           AI.Funn.Diff.Diff (Derivable(..))
 import           AI.Funn.Space
 
 import           AI.Funn.CL.Code as C
+import           AI.Funn.CL.Function
 
 data Mutable = I | M deriving (Show, Eq)
 
@@ -79,6 +80,11 @@ instance (MonadCL s m, KnownNat n, Floats a, CLNum a) => Inner m Double (Blob s 
 instance (MonadCL s m, KnownNat n, Floats a, CLNum a) => Finite m Double (Blob s n a) where
   getBasis b = toList b
 
+instance (KnownNat n, Storable a, CLNum a) => CLType (Blob s n a) (ArrayR a) s where
+  karg = blobArg
+
+instance (KnownNat n, Storable a, CLNum a) => CLType (MBlob s n a) (ArrayW a) s where
+  karg = blobArg
 
 -- Main operations --
 
@@ -124,15 +130,15 @@ pureBlob x = Blob <$> Buffer.fromVector (S.replicate n (fromDouble x))
 
 scaleBlob :: forall n a m s. (MonadCL s m, KnownNat n, Floats a, CLNum a) => Double -> Blob s n a -> m (Blob s n a)
 scaleBlob a xs = do ys <- createBlob
-                    runKernel scaleSource "run" [doubleArg a, blobArg xs, blobArg ys] [] [n] [1]
+                    liftOpenCL (scale [n] a xs ys)
                     unsafeFreeze ys
   where
     n = fromIntegral $ natVal (Proxy :: Proxy n)
-    scale :: Expr Double -> ArrayR a -> ArrayW a -> CL ()
-    scale a xs ys = do
-      i <- C.get_global_id 0
-      C.at ys i .= castDouble a * (C.at xs i)
-    scaleSource = C.kernel scale
+
+    scale :: [Int] -> Double -> Blob s n a -> MBlob s n a -> OpenCL s ()
+    scale = clfun $ \a xs ys -> do
+      i <- get_global_id 0
+      at ys i .= castDouble a * at xs i
 
     castDouble :: Expr Double -> Expr a
     castDouble (Expr e) = Expr e
