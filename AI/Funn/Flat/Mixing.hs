@@ -7,33 +7,27 @@
 {-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
 module AI.Funn.Flat.Mixing (amixDiff) where
 
-import           GHC.TypeLits
-
 import           Control.Applicative
 import           Control.Applicative.Backwards
+import           Control.DeepSeq
 import           Control.Monad
-import           Data.Foldable
-import           Data.Monoid
-import           Data.Traversable
-import           Data.Type.Equality
-
 import           Control.Monad.State.Lazy as State
-
 import           Data.Bits
 import           Data.Constraint
+import           Data.Foldable
+import           Data.Monoid
 import           Data.Proxy
 import           Data.Random
-
-import           Control.DeepSeq
-import           Numeric.Search.Range
-
+import           Data.Traversable
+import           Data.Type.Equality
 import           Data.Vector (Vector)
 import qualified Data.Vector.Generic as V
 import qualified Data.Vector.Storable as S
 import qualified Data.Vector.Storable.Mutable as M
-
 import           Foreign.C
 import           Foreign.Ptr
+import           GHC.TypeLits
+import           Numeric.Search.Range
 import           System.IO.Unsafe
 import           Unsafe.Coerce
 

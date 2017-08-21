@@ -158,3 +158,18 @@ fcDiff = Diff run
 
     α = fromIntegral $ natVal (Proxy :: Proxy α)
     β = fromIntegral $ natVal (Proxy :: Proxy β)
+
+splitDiff :: forall α β a m s. (MonadCL s m, KnownNat α, KnownNat β, CLNum a) =>
+             Diff m (Blob s (α + β) a) (Blob s α a, Blob s β a)
+splitDiff = Diff run
+  where
+    run ab = pure (splitBlob ab, backward)
+    backward (da, db) = catBlob da db
+
+mergeDiff :: forall α β a m s. (MonadCL s m, KnownNat α, KnownNat β, CLNum a) =>
+             Diff m (Blob s α a, Blob s β a) (Blob s (α + β) a)
+mergeDiff = Diff run
+  where
+    run (a,b) = do ab <- catBlob a b
+                   pure (ab, backward)
+    backward dab = pure (splitBlob dab)

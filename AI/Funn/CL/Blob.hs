@@ -19,6 +19,7 @@ module AI.Funn.CL.Blob (
   catBlob, splitBlob,
   mapBlob, zipWithBlob,
   mapBlob', zipWithBlob',
+  adamBlob
   ) where
 
 import           Control.Applicative
@@ -43,7 +44,7 @@ import qualified AI.Funn.CL.Buffer as Buffer
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.Diff.Diff (Derivable(..))
 import           AI.Funn.Space
-
+import           AI.Funn.SGD
 import           AI.Funn.CL.Code as C
 import           AI.Funn.CL.Function
 
@@ -175,7 +176,7 @@ squareBlob = mapBlob' (^2)
 sqrtBlob :: forall n m s a. (MonadCL s m, KnownNat n, CLFloating a) => Blob s n a -> m (Blob s n a)
 sqrtBlob = mapBlob' sqrt
 
-catBlob :: forall m n s a q. (KnownNat m, KnownNat n, Storable a) => BlobT q s m a -> BlobT q s n a -> OpenCL s (BlobT q s (m + n) a)
+catBlob :: forall α β m s a q. (MonadCL s m, KnownNat α, KnownNat β, Storable a) => BlobT q s α a -> BlobT q s β a -> m (BlobT q s (α + β) a)
 catBlob (Blob xs) (Blob ys) = Blob <$> Buffer.concat [xs, ys]
 
 splitBlob :: forall m n s a q. (KnownNat m, KnownNat n) => BlobT q s (m + n) a -> (BlobT q s m a, BlobT q s n a)
@@ -238,3 +239,15 @@ zipWithBlob' :: forall n m s a. (MonadCL s m, KnownNat n, Storable a, Argument (
             => (Expr a -> Expr a -> Expr a)
             -> Blob s n a -> Blob s n a -> m (Blob s n a)
 zipWithBlob' f = zipWithBlob (\x y -> pure (f x y))
+
+
+adamBlob :: forall (n :: Nat) m s a. (MonadCL s m, KnownNat n, CLFloating a, Floats a) => AdamConfig m (Blob s n a) (Blob s n a)
+adamBlob = defaultAdam {
+  adam_pure_d = pureBlob,
+  adam_scale_d = scale,
+  adam_add_d = plus,
+  adam_square_d = squareBlob,
+  adam_sqrt_d = sqrtBlob,
+  adam_divide_d = divideBlob,
+  adam_update_p = plus
+  }

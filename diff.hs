@@ -4,50 +4,48 @@
 {-# LANGUAGE FlexibleInstances, MultiParamTypeClasses #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ConstraintKinds #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
+{-# OPTIONS_GHC -fconstraint-solver-iterations=20 #-}
+{-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 module Main where
+
 import           Control.Applicative
-import           Control.Monad
 import           Control.Category
-import           Data.Foldable
-import           Data.Monoid
-import           Data.Traversable
-
-import           Data.Char
-import           Data.IORef
-import           Data.List
-import           Data.Maybe
-import           Data.Proxy
-import           Data.Word
-
 import           Control.Concurrent
-import           System.Clock
-import           System.Environment
-import           System.IO
-
-import           Options.Applicative
-
-import           Text.Printf
-
+import           Control.DeepSeq
+import           Control.Monad
+import           Control.Monad.IO.Class
+import qualified Control.Monad.State.Lazy as SL
+import           Control.Monad.Trans
 import qualified Data.Binary as LB
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.ByteString.Lazy.Char8 as LC
-
-import           Control.DeepSeq
-import           Data.Type.Equality ((:~:)(..))
-import           Debug.Trace
-import           GHC.TypeLits
-
-import qualified Control.Monad.State.Lazy as SL
-import           Control.Monad.IO.Class
+import           Data.Char
+import           Data.Foldable
 import           Data.Functor.Identity
+import           Data.IORef
+import           Data.List
+import           Data.Maybe
+import           Data.Monoid
+import           Data.Proxy
 import           Data.Random
 import           Data.Random.Distribution.Categorical
-import           System.Random
-
+import           Data.Traversable
+import           Data.Type.Equality ((:~:)(..))
 import           Data.Vector (Vector)
 import qualified Data.Vector.Generic as V
 import qualified Data.Vector.Unboxed as U
+import           Data.Word
+import           Debug.Trace
+import           GHC.TypeLits
+import           Options.Applicative
+import           System.Clock
+import           System.Environment
+import           System.IO
+import           System.Random
+import           Text.Printf
 
 import           AI.Funn.Common
 import           AI.Funn.Flat.Blob (Blob(..), blob, getBlob)
@@ -77,12 +75,12 @@ unfoldM n m = (:) <$> m <*> unfoldM (n-1) m
 onehot :: Vector (Blob 128)
 onehot = V.generate 128 (\i -> Blob.fromList (replicate i 0 ++ [1] ++ replicate (127 - i) 0))
 
-sampleRNN :: Int -> s -> (s -> Blob 128 -> IO (s, Blob 128)) -> IO [Char]
+sampleRNN :: MonadIO m => Int -> s -> (s -> Blob 128 -> m (s, Blob 128)) -> m [Char]
 sampleRNN n s0 next = SL.evalStateT (unfoldM n step) (s0, 0)
   where
     step = do
       (s, c) <- SL.get
-      (new_s, new_q) <- liftIO $ next s (onehot V.! c)
+      (new_s, new_q) <- lift $ next s (onehot V.! c)
       let exps = V.map exp (getBlob new_q)
           factor = 1 / V.sum exps
           ps = V.map (*factor) exps
