@@ -34,7 +34,7 @@ import           Unsafe.Coerce
 import           AI.Funn.Common
 import           AI.Funn.Flat.Flat
 import           AI.Funn.Diff.Diff
-import           AI.Funn.NatLog
+import           AI.Funn.TypeLits
 import           AI.Funn.Flat.Blob (Blob(..), blob, getBlob)
 import qualified AI.Funn.Flat.Blob as Blob
 import           AI.Funn.Space
@@ -163,15 +163,15 @@ resizeDiff = Diff run
   where
     run a = return (resizeBlob a, pure . resizeBlob)
 
-type Cover a b = 2^(LogCeil (Max a b))
+type Cover a b = 2^(CLog (Max a b))
 
 bmixDiff :: forall s a b m. (Monad m, KnownNat s, KnownNat a, KnownNat b) =>
-            Proxy s -> Diff m (Blob (s * Cover a b * LogCeil (Max a b)), Blob a) (Blob b)
+            Proxy s -> Diff m (Blob (s * Cover a b * CLog (Max a b)), Blob a) (Blob b)
 bmixDiff proxy = second resizeDiff >>> sub >>> resizeDiff
   where
-    sub :: Diff m (Blob (s * Cover a b * LogCeil (Max a b)), Blob (Cover a b)) (Blob (Cover a b))
+    sub :: Diff m (Blob (s * Cover a b * CLog (Max a b)), Blob (Cover a b)) (Blob (Cover a b))
     sub = mixDiff proxy
 
 amixDiff :: forall s a b m. (Monad m, KnownNat s, KnownNat a, KnownNat b) =>
-            Proxy s -> Diff m (Blob (s * 2^(LogCeil (Max a b)) * LogCeil (Max a b) + b), Blob a) (Blob b)
+            Proxy s -> Diff m (Blob (s * 2^(CLog (Max a b)) * CLog (Max a b) + b), Blob a) (Blob b)
 amixDiff proxy = first (splitDiff >>> swap) >>> assocR >>> second (bmixDiff proxy) >>> biasDiff

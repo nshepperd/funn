@@ -12,9 +12,9 @@ import           Control.Applicative
 import           Control.Applicative.Backwards
 import           Control.Monad
 import           Control.Monad.State.Lazy
-import           Data.Proxy
 import           Data.Foldable
 import           Data.List
+import           Data.Proxy
 import           Data.Traversable
 import           GHC.TypeLits
 
@@ -24,8 +24,8 @@ import qualified AI.Funn.CL.Buffer as Buffer
 import           AI.Funn.CL.Code as C
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.Diff.Diff (Derivable(..), Diff(..))
-import           AI.Funn.NatLog
 import           AI.Funn.SomeNat
+import           AI.Funn.TypeLits
 
 crossf :: Expr Int -> Expr Int -> Expr Int -> Expr Int -> Expr Int
 crossf n d l s = (n-1) .&. (part1 .|. part2)
