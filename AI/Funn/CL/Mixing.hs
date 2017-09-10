@@ -4,9 +4,10 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE TypeApplications #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
-module AI.Funn.CL.Mixing (mixDiff) where
+module AI.Funn.CL.Mixing (amixDiff) where
 
 import           Control.Applicative
 import           Control.Applicative.Backwards
@@ -17,6 +18,7 @@ import           Data.Foldable
 import           Data.List
 import           Data.Proxy
 import           Data.Traversable
+import           Foreign.Storable (Storable)
 import           GHC.TypeLits
 
 import           AI.Funn.CL.Blob
@@ -25,7 +27,6 @@ import qualified AI.Funn.CL.Buffer as Buffer
 import           AI.Funn.CL.Code as C
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.Diff.Diff (Derivable(..), Diff(..))
-import           AI.Funn.SomeNat
 import           AI.Funn.TypeLits
 
 crossf :: Expr Int -> Expr Int -> Expr Int -> Expr Int -> Expr Int
@@ -40,9 +41,40 @@ traverseBack f = forwards . traverse (Backwards . f)
 traverseBack_ :: (Traversable t, Applicative f) => (a -> f b) -> t a -> f ()
 traverseBack_ f = forwards . traverse_ (Backwards . f)
 
+resize :: (MonadIO m, Storable t, KnownNat a, KnownNat b) => Blob t a -> m (Blob t b)
+resize (Blob as) = do
+  out@(Blob bs) <- createBlob
+  Buffer.copy as bs 0 0 (min (Buffer.size as) (Buffer.size bs))
+  Blob.unsafeFreeze out
+
+type MixParams' k d = k * (2^d) * d
+type MixParams k a b = MixParams' k (CLog (Max a b)) + b
+
+amixDiff :: forall k α β a m. (MonadIO m, KnownNat k, KnownNat α, KnownNat β, CLNum a)
+         => Proxy k -> Diff m (Blob a (MixParams k α β), Blob a α) (Blob a β)
+amixDiff proxy = Diff run
+  where
+    run (pars, input) = do
+      input_fit <- resize input
+      (output_fit, k) <- runDiff (mixDiff proxy (Proxy @ (CLog (Max α β)))) (sub_par, input_fit)
+      output <- resize output_fit
+      bs <- addBlob output add
+      return (bs, backward k)
+      where
+        (sub_par, add) = splitBlob pars
+
+    backward k d_output = do
+      d_output_fit <- resize d_output
+      (dsub_par, d_input_fit) <- k d_output_fit
+      d_pars <- catBlob dsub_par d_output
+      d_input <- resize d_input_fit
+      return (d_pars, d_input)
+
+
+
 mixDiff :: forall k d a m proxy. (MonadIO m, KnownNat k, KnownNat d, CLNum a) =>
-           proxy k -> Diff m (Blob a (k * (2^d) * d), Blob a (2^d)) (Blob a (2^d))
-mixDiff proxy = Diff run
+           proxy k -> proxy d -> Diff m (Blob a (k * (2^d) * d), Blob a (2^d)) (Blob a (2^d))
+mixDiff proxy _ = Diff run
   where
     run (pars, input) = do
       let sliced = slicePars pars

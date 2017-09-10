@@ -50,19 +50,19 @@ import           System.Random
 import           Text.Printf
 
 import           AI.Funn.Common
+import           AI.Funn.Diff.Diff (Diff(..), Derivable(..), (>>>))
+import qualified AI.Funn.Diff.Diff as Diff
 import           AI.Funn.Flat.Blob (Blob, blob, getBlob)
 import qualified AI.Funn.Flat.Blob as Blob
 import           AI.Funn.Flat.ParBox
-import           AI.Funn.Diff.Diff (Diff(..), Derivable(..), (>>>))
-import qualified AI.Funn.Diff.Diff as Diff
-import           AI.Funn.Network.Network
 import           AI.Funn.Network.Flat
-import           AI.Funn.Network.RNN
 import           AI.Funn.Network.LSTM
 import           AI.Funn.Network.Mixing
+import           AI.Funn.Network.Network
+import           AI.Funn.Network.RNN
 import           AI.Funn.SGD
-import           AI.Funn.SomeNat
 import           AI.Funn.Space
+import           AI.Funn.TypeLits
 
 sampleIO :: MonadIO m => RVar a -> m a
 sampleIO v = liftIO (runRVar v StdRandom)

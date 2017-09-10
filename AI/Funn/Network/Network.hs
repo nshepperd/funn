@@ -36,7 +36,7 @@ import qualified AI.Funn.Diff.Diff as Diff
 import           AI.Funn.Flat.Blob (Blob(..))
 import qualified AI.Funn.Flat.Blob as Blob
 import           AI.Funn.Flat.Flat
-import           AI.Funn.SomeNat
+import           AI.Funn.TypeLits
 
 data Network m a b where
   Network :: KnownNat p => Proxy p -> Diff m (Blob p, a) b -> RVar (Blob p) -> Network m a b

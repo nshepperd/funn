@@ -5,25 +5,28 @@
 {-# LANGUAGE TypeOperators #-}
 module AI.Funn.CL.Flat (
   reluDiff, sigmoidDiff, tanhDiff,
-  fcDiff, quadraticCost
+  fcDiff, quadraticCost, splitDiff, mergeDiff,
+  softmaxCost
   ) where
 
 import           Control.Applicative
 import           Control.Monad
-import           Data.Proxy
-import           Debug.Trace
-
 import           Control.Monad.IO.Class
+import           Data.Proxy
+import qualified Data.Vector.Generic as V
+import qualified Data.Vector.Storable as S
+import           Debug.Trace
 import qualified Foreign.OpenCL.Bindings as CL
+import           GHC.Float
 import           GHC.TypeLits
 
-import           AI.Funn.SomeNat
-import           AI.Funn.Space
 import           AI.Funn.CL.Blob
 import qualified AI.Funn.CL.Blob as Blob
+import           AI.Funn.CL.Code as C
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.Diff.Diff (Derivable(..), Diff(..))
-import           AI.Funn.CL.Code as C
+import           AI.Funn.Space
+import           AI.Funn.TypeLits
 
 reluDiff :: forall n m a. (MonadIO m, KnownNat n, Relational a, CLNum a) => Diff m (Blob a n) (Blob a n)
 reluDiff = Diff run
@@ -81,6 +84,28 @@ quadraticCost = Diff run
       dx <- scaleBlob (2 * δ) ds
       dy <- scaleBlob (-2 * δ) ds
       return (dx, dy)
+
+softmaxCost :: (MonadIO m, KnownNat n, CLNum a, Floats a) => Diff m (Blob a n, Int) Double
+softmaxCost = Diff run
+  where run (bo, target) = do
+          oslist <- Blob.toList bo
+          let os = V.fromList oslist :: S.Vector Double
+              xt = os V.! target
+              exp_total_minus_xt = V.imap (\j x -> if j /= target then exp (x - xt) else 0) os
+              log_total_minus_xt = log1p (V.sum exp_total_minus_xt)
+              cost = log_total_minus_xt
+          return (cost, backward target os)
+
+        backward target os dcost = do
+          let
+            total_but_target = V.sum (V.imap (\i x -> if i /= target then exp x else 0) os)
+            total = V.sum (V.map exp os)
+            back = V.imap (\j x -> dcost * (if target == j then
+                                              -total_but_target / total
+                                             else
+                                               exp x / total)) os
+          backblob <- Blob.fromList (V.toList back)
+          return (backblob, ())
 
 fcDiff :: forall α β a m. (MonadIO m, KnownNat α, KnownNat β, CLNum a) =>
           Diff m (Blob a (α * β + β), Blob a α) (Blob a β)

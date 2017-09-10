@@ -172,6 +172,7 @@ softmaxCost = Diff run
                                              else
                                                exp x / total)) os
           in return (blob back, ())
+
 -- Special --
 
 natInt :: (KnownNat n) => proxy n -> Int

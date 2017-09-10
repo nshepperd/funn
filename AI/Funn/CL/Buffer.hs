@@ -1,8 +1,8 @@
 module AI.Funn.CL.Buffer (
   Buffer, malloc, free, arg,
   fromVector, toVector,
-  fromList, toList,
-  slice, concat, clone
+  fromList, toList, size,
+  slice, concat, clone, copy
   ) where
 
 import           Prelude hiding (concat)
@@ -84,3 +84,10 @@ concat xs = do
   where
     totalSize = sum (map size xs)
     offsets = scanl (+) 0 (map size xs)
+
+copy :: (MonadIO m, Storable a) => Buffer a -> Buffer a -> Int -> Int -> Int -> m ()
+copy (Buffer src srcOff _) (Buffer dst dstOff _) srcOffset dstOffset len =
+  Mem.copy src dst srcOffsetTotal dstOffsetTotal len
+  where
+    srcOffsetTotal = srcOff + srcOffset
+    dstOffsetTotal = dstOff + dstOffset

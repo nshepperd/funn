@@ -12,15 +12,14 @@ import           Control.Applicative
 import           Control.Monad
 import           Control.Monad.IO.Class
 import           Data.Proxy
-
 import           GHC.TypeLits
 
-import           AI.Funn.SomeNat
 import           AI.Funn.CL.Blob
 import qualified AI.Funn.CL.Blob as Blob
+import           AI.Funn.CL.Code as C
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.Diff.Diff (Derivable(..), Diff(..))
-import           AI.Funn.CL.Code as C
+import           AI.Funn.TypeLits
 
 lstmDiff :: forall n m a. (MonadIO m, KnownNat n, CLNum a)
          => Diff m

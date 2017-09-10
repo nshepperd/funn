@@ -186,7 +186,7 @@ prop_lstmdiff :: Property
 prop_lstmdiff = checkGradientCL (lstmDiff @2 @IO @Double)
 
 prop_mixdiff :: Property
-prop_mixdiff = checkGradientCL (mixDiff @3 @2 @Double Proxy)
+prop_mixdiff = checkGradientCL (amixDiff @3 @2 @2 @Double Proxy)
 
 -- Make TemplateHaskell aware of above definitions.
 $(return [])

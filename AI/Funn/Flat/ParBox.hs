@@ -13,7 +13,7 @@ import           Foreign.Ptr
 import           GHC.TypeLits
 
 import           AI.Funn.Common
-import           AI.Funn.SomeNat
+import           AI.Funn.TypeLits
 import           AI.Funn.Flat.Blob
 
 

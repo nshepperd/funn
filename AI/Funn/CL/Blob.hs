@@ -122,6 +122,12 @@ thaw (Blob mem) = Blob <$> Buffer.clone mem
 unsafeThaw :: (MonadIO m, Storable a) => Blob a n -> m (MBlob a n)
 unsafeThaw (Blob mem) = pure (Blob mem)
 
+copy :: forall n a m. (MonadIO m, Storable a, KnownNat n) => Blob a n -> MBlob a n -> m ()
+copy (Blob src) (Blob dst) = Buffer.copy src dst 0 0 len
+  where
+    len = fromIntegral $ natVal (Proxy :: Proxy n)
+
+
 -- Arithmetic operations --
 
 pureBlob :: forall n a q m. (MonadIO m, KnownNat n, Floats a) => Double -> m (BlobT q a n)
