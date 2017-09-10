@@ -25,7 +25,7 @@ import           AI.Funn.CL.MonadCL
 import           AI.Funn.Diff.Diff (Derivable(..), Diff(..))
 import           AI.Funn.CL.Code as C
 
-reluDiff :: forall n m a. (MonadIO m, KnownNat n, Relational a, CLNum a) => Diff m (Blob n a) (Blob n a)
+reluDiff :: forall n m a. (MonadIO m, KnownNat n, Relational a, CLNum a) => Diff m (Blob a n) (Blob a n)
 reluDiff = Diff run
   where
     run xs = do
@@ -35,7 +35,7 @@ reluDiff = Diff run
     relu = mapBlob' (\x -> fmax 0 x)
     reluBack = zipWithBlob' (\x dy -> fstep 0 x * dy)
 
-sigmoidDiff :: forall n m a. (MonadIO m, KnownNat n, CLFloating a) => Diff m (Blob n a) (Blob n a)
+sigmoidDiff :: forall n m a. (MonadIO m, KnownNat n, CLFloating a) => Diff m (Blob a n) (Blob a n)
 sigmoidDiff = Diff run
   where
     run xs = do
@@ -50,7 +50,7 @@ sigmoidDiff = Diff run
       z <- eval $ exp (-abs x)
       return $ dy * z / (1 + z)^2
 
-tanhDiff :: forall n m a. (MonadIO m, KnownNat n, CLFloating a) => Diff m (Blob n a) (Blob n a)
+tanhDiff :: forall n m a. (MonadIO m, KnownNat n, CLFloating a) => Diff m (Blob a n) (Blob a n)
 tanhDiff = Diff run
   where
     run xs = do
@@ -68,7 +68,7 @@ tanhDiff = Diff run
       z <- eval $ 2 / (zp + zm)
       return $ dy * z^2
 
-quadraticCost :: forall n m a. (MonadIO m, KnownNat n, CLNum a, Floats a) => Diff m (Blob n a, Blob n a) Double
+quadraticCost :: forall n m a. (MonadIO m, KnownNat n, CLNum a, Floats a) => Diff m (Blob a n, Blob a n) Double
 quadraticCost = Diff run
   where
     run (xs, ys) = do
@@ -83,7 +83,7 @@ quadraticCost = Diff run
       return (dx, dy)
 
 fcDiff :: forall α β a m. (MonadIO m, KnownNat α, KnownNat β, CLNum a) =>
-          Diff m (Blob (α * β + β) a, Blob α a) (Blob β a)
+          Diff m (Blob a (α * β + β), Blob a α) (Blob a β)
 fcDiff = Diff run
   where
     run (pars, xs) = do
@@ -94,12 +94,10 @@ fcDiff = Diff run
       frozen_ys <- unsafeFreeze ys
       return (frozen_ys, backward pars xs)
 
-    backward :: Blob (α * β + β) a -> Blob α a -> Blob β a ->
-                m (Blob (α * β + β) a, Blob α a)
     backward pars xs dys = do
       dpars <- createBlob
       dxs <- createBlob
-      let (dws :: MBlob (α * β) a, dbs :: MBlob β a) = splitBlob dpars
+      let (dws :: MBlob a (α * β), dbs :: MBlob a β) = splitBlob dpars
       (runKernel backwardwsK "run"
        [int32Arg α, blobArg xs, blobArg dys, blobArg dws]
        [] [α, β] [1, 1])
@@ -160,14 +158,14 @@ fcDiff = Diff run
     β = fromIntegral $ natVal (Proxy :: Proxy β)
 
 splitDiff :: forall α β a m. (MonadIO m, KnownNat α, KnownNat β, CLNum a) =>
-             Diff m (Blob (α + β) a) (Blob α a, Blob β a)
+             Diff m (Blob a (α + β)) (Blob a α, Blob a β)
 splitDiff = Diff run
   where
     run ab = pure (splitBlob ab, backward)
     backward (da, db) = catBlob da db
 
 mergeDiff :: forall α β a m. (MonadIO m, KnownNat α, KnownNat β, CLNum a) =>
-             Diff m (Blob α a, Blob β a) (Blob (α + β) a)
+             Diff m (Blob a α, Blob a β) (Blob a (α + β))
 mergeDiff = Diff run
   where
     run (a,b) = do ab <- catBlob a b

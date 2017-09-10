@@ -24,12 +24,12 @@ import           AI.Funn.CL.Code as C
 
 lstmDiff :: forall n m a. (MonadIO m, KnownNat n, CLNum a)
          => Diff m
-            (Blob (2*n) a, (Blob n a, Blob (4*n) a))
-            (Blob n a, Blob n a)
+            (Blob a (2*n), (Blob a n, Blob a (4*n)))
+            (Blob a n, Blob a n)
 lstmDiff = Diff run
   where
     run (ws, (cs, xs)) = do
-      (store :: MBlob (8 * n) a) <- createBlob @ (8 * n)
+      (store :: MBlob a (8 * n)) <- createBlob @ (8 * n)
       new_cs <- createBlob
       ys <- createBlob
       (runKernel forwardSrc "run"

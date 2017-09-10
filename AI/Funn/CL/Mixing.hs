@@ -41,7 +41,7 @@ traverseBack_ :: (Traversable t, Applicative f) => (a -> f b) -> t a -> f ()
 traverseBack_ f = forwards . traverse_ (Backwards . f)
 
 mixDiff :: forall k d a m proxy. (MonadIO m, KnownNat k, KnownNat d, CLNum a) =>
-           proxy k -> Diff m (Blob (k * (2^d) * d) a, Blob (2^d) a) (Blob (2^d) a)
+           proxy k -> Diff m (Blob a (k * (2^d) * d), Blob a (2^d)) (Blob a (2^d))
 mixDiff proxy = Diff run
   where
     run (pars, input) = do
@@ -56,7 +56,7 @@ mixDiff proxy = Diff run
       frozen_dpars <- unsafeFreeze dpars
       return (frozen_dpars, di)
 
-    slicePars :: BlobT q (k * (2^d) * d) a -> [BlobT q (k * (2^d)) a]
+    slicePars :: BlobT q a (k * (2^d) * d) -> [BlobT q a (k * (2^d))]
     slicePars (Blob buffer) = [Blob (Buffer.slice (k*n*l) (k*n) buffer) | l <- [0..d-1]]
 
     k,d,n :: Int
@@ -64,7 +64,7 @@ mixDiff proxy = Diff run
     d = fromIntegral (natVal (Proxy :: Proxy d))
     n = 2^d
 
-    go_forward :: (Int, Blob (k * (2^d)) a) -> StateT (Blob (2^d) a) m (Blob (2^d) a)
+    go_forward :: (Int, Blob a (k * (2^d))) -> StateT (Blob a (2^d)) m (Blob a (2^d))
     go_forward (l, par) = do
       xs <- get
       ys <- lift createBlob
@@ -75,8 +75,8 @@ mixDiff proxy = Diff run
       put frozen_ys
       return xs
 
-    go_backward :: (Int, Blob (2^d) a, Blob (k * (2^d)) a, MBlob (k * (2^d)) a)
-                -> StateT (Blob (2^d) a) m ()
+    go_backward :: (Int, Blob a (2^d), Blob a (k * (2^d)), MBlob a (k * (2^d)))
+                -> StateT (Blob a (2^d)) m ()
     go_backward (l,xs,par,dpar) = do
       dys <- get
       dxs <- lift createBlob

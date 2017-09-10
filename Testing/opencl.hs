@@ -68,7 +68,7 @@ instance Loadable Double 1 where
   fromCPU b = pure (head (C.toList b))
   fromGPU x = pure (C.fromList [x])
 
-instance (KnownNat n, Floats a) => Loadable (Blob n a) n where
+instance (KnownNat n, Floats a) => Loadable (Blob a n) n where
   fromCPU a = Blob.fromList (C.toList a)
   fromGPU a = C.fromList <$> Blob.toList a
 
@@ -109,10 +109,10 @@ prop_Buffer_slice = monadic clProperty $ do
 
 -- Blob properties.
 
-pickBlob :: (KnownNat n) => PropertyM IO (Blob n Double)
+pickBlob :: (KnownNat n) => PropertyM IO (Blob Double n)
 pickBlob = lift . fromCPU =<< pick arbitrary
 
-assertEqual :: (KnownNat n) => Blob n Double -> Blob n Double -> PropertyM IO ()
+assertEqual :: (KnownNat n) => Blob Double n -> Blob Double n -> PropertyM IO ()
 assertEqual one two = do one_c <- lift (fromGPU one)
                          two_c <- lift (fromGPU two)
                          stop (one_c === two_c)
