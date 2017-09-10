@@ -38,23 +38,22 @@ import Testing.Util
 
 -- Setup for OpenCL test cases.
 
-clProperty :: OpenCL Global Property -> Property
-clProperty clProp = ioProperty (runOpenCLGlobal clProp)
+clProperty :: IO Property -> Property
+clProperty clProp = ioProperty (initOpenCL >> clProp)
 
--- Looser bounds for OpenCL as we are single precision.
 checkGradientCL :: (Loadable a n1, D a ~ a,
                     Loadable b n2, D b ~ b)
-               => Diff (OpenCL Global) a b -> Property
+               => Diff IO a b -> Property
 checkGradientCL diff = checkGradient 1e8 0.001 1e-4 clProperty (fromCPUDiff >>> diff >>> fromGPUDiff)
 
-fromCPUDiff :: (Loadable a n, Loadable (D a) n) => Diff (OpenCL Global) (C.Blob n) a
+fromCPUDiff :: (Loadable a n, Loadable (D a) n) => Diff (IO) (C.Blob n) a
 fromCPUDiff = Diff run
   where
     run a = do x <- fromCPU a
                return (x, backward)
     backward b = fromGPU b
 
-fromGPUDiff :: (Loadable a n, Loadable (D a) n) => Diff (OpenCL Global) a (C.Blob n)
+fromGPUDiff :: (Loadable a n, Loadable (D a) n) => Diff (IO) a (C.Blob n)
 fromGPUDiff = Diff run
   where
     run a = do x <- fromGPU a
@@ -62,14 +61,14 @@ fromGPUDiff = Diff run
     backward b = fromCPU b
 
 class KnownNat n => Loadable x n | x -> n where
-  fromCPU :: C.Blob n -> OpenCL Global x
-  fromGPU :: x -> OpenCL Global (C.Blob n)
+  fromCPU :: C.Blob n -> IO x
+  fromGPU :: x -> IO (C.Blob n)
 
 instance Loadable Double 1 where
   fromCPU b = pure (head (C.toList b))
   fromGPU x = pure (C.fromList [x])
 
-instance (KnownNat n, Floats a) => Loadable (Blob Global n a) n where
+instance (KnownNat n, Floats a) => Loadable (Blob n a) n where
   fromCPU a = Blob.fromList (C.toList a)
   fromGPU a = C.fromList <$> Blob.toList a
 
@@ -110,10 +109,10 @@ prop_Buffer_slice = monadic clProperty $ do
 
 -- Blob properties.
 
-pickBlob :: (KnownNat n) => PropertyM (OpenCL Global) (Blob Global n Double)
+pickBlob :: (KnownNat n) => PropertyM IO (Blob n Double)
 pickBlob = lift . fromCPU =<< pick arbitrary
 
-assertEqual :: (KnownNat n) => Blob Global n Double -> Blob Global n Double -> PropertyM (OpenCL Global) ()
+assertEqual :: (KnownNat n) => Blob n Double -> Blob n Double -> PropertyM IO ()
 assertEqual one two = do one_c <- lift (fromGPU one)
                          two_c <- lift (fromGPU two)
                          stop (one_c === two_c)
@@ -172,19 +171,19 @@ prop_fcdiff :: Property
 prop_fcdiff = checkGradientCL (fcDiff @2 @2 @Double)
 
 prop_reludiff :: Property
-prop_reludiff = checkGradientCL (reluDiff @5 @Double)
+prop_reludiff = checkGradientCL (reluDiff @5 @IO @Double)
 
 prop_sigmoiddiff :: Property
-prop_sigmoiddiff = checkGradientCL (sigmoidDiff @3 @Double)
+prop_sigmoiddiff = checkGradientCL (sigmoidDiff @3 @IO @Double)
 
 prop_tanhdiff :: Property
-prop_tanhdiff = checkGradientCL (tanhDiff @3 @Double)
+prop_tanhdiff = checkGradientCL (tanhDiff @3 @IO @Double)
 
 prop_quadraticcost :: Property
-prop_quadraticcost = checkGradientCL (quadraticCost @5 @Double)
+prop_quadraticcost = checkGradientCL (quadraticCost @5 @IO @Double)
 
 prop_lstmdiff :: Property
-prop_lstmdiff = checkGradientCL (lstmDiff @2 @Double)
+prop_lstmdiff = checkGradientCL (lstmDiff @2 @IO @Double)
 
 prop_mixdiff :: Property
 prop_mixdiff = checkGradientCL (mixDiff @3 @2 @Double Proxy)

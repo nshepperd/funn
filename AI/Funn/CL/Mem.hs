@@ -26,26 +26,26 @@ import           AI.Funn.CL.MonadCL
 -- These have a minimum size of 1 element.
 
 data CMem
-newtype Mem s a = Mem (ForeignPtr CMem)
-                deriving Show
+newtype Mem a = Mem (ForeignPtr CMem)
+              deriving Show
 
 foreign import ccall "&clmem_free" clmem_free :: FunPtr (Ptr CMem -> IO ())
 foreign import ccall "clmem_increase" clmem_increase :: Int64 -> IO ()
 foreign import ccall "clmem_count" clmem_count :: IO Int64
 
-malloc :: (MonadCL s m, Storable a) => Int -> m (Mem s a)
+malloc :: (MonadIO m, Storable a) => Int -> m (Mem a)
 malloc n = do ctx <- getContext
               fromAlloc (CL.mallocArray ctx [] n)
 
-free :: MonadIO m => Mem s a -> m ()
+free :: MonadIO m => Mem a -> m ()
 free (Mem foreignptr) = liftIO (finalizeForeignPtr foreignptr)
 
-arg :: Mem s a -> KernelArg s
+arg :: Mem a -> KernelArg
 arg mem = KernelArg run
   where
     run k = withMem mem (k . pure . CL.MObjArg)
 
-pokeSubArray :: (MonadCL s m, Storable a) => Int -> S.Vector a -> Mem s a -> m ()
+pokeSubArray :: (MonadIO m, Storable a) => Int -> S.Vector a -> Mem a -> m ()
 pokeSubArray offset xs mem
   | V.null xs = return ()
   | otherwise = do
@@ -54,7 +54,7 @@ pokeSubArray offset xs mem
         S.unsafeWith xs $ \ptr -> do
           CL.pokeArray q offset (V.length xs) ptr memobj
 
-peekSubArray :: (MonadCL s m, Storable a) => Int -> Int -> Mem s a -> m (S.Vector a)
+peekSubArray :: (MonadIO m, Storable a) => Int -> Int -> Mem a -> m (S.Vector a)
 peekSubArray offset 0 mem = return V.empty
 peekSubArray offset len mem = do
   q <- getCommandQueue
@@ -67,7 +67,7 @@ peekSubArray offset len mem = do
 elemSize :: forall a proxy. (Storable a) => proxy a -> Int
 elemSize _ = sizeOf (undefined :: a)
 
-copy :: (MonadCL s m, Storable a) => (Mem s a) -> (Mem s a) -> Int -> Int -> Int -> m ()
+copy :: (MonadIO m, Storable a) => Mem a -> Mem a -> Int -> Int -> Int -> m ()
 copy src dst offSrc offDst 0 = return ()
 copy src dst offSrc offDst len = do
   q <- getCommandQueue
@@ -83,7 +83,7 @@ copy src dst offSrc offDst len = do
 
 -- Utility functions --
 
-fromAlloc :: MonadCL s m => IO (CL.MemObject a) -> m (Mem s a)
+fromAlloc :: MonadIO m => IO (CL.MemObject a) -> m (Mem a)
 fromAlloc alloc = liftIO $ do memobj <- tryAllocation alloc
                               size <- CL.memobjSize memobj
                               clmem_increase (fromIntegral size)
@@ -104,7 +104,7 @@ tryAllocation m = catch m (\(e :: CL.ClException) -> tryAgain)
       performGC
       m
 
-withMem :: Mem s a -> (CL.MemObject a -> IO r) -> IO r
+withMem :: Mem a -> (CL.MemObject a -> IO r) -> IO r
 withMem (Mem foreignptr) k = withForeignPtr foreignptr (k . unsafeInject)
 
 -- Gets the Ptr out of hopencl.

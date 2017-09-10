@@ -10,6 +10,7 @@ module AI.Funn.CL.LSTM (lstmDiff) where
 
 import           Control.Applicative
 import           Control.Monad
+import           Control.Monad.IO.Class
 import           Data.Proxy
 
 import           GHC.TypeLits
@@ -21,14 +22,14 @@ import           AI.Funn.CL.MonadCL
 import           AI.Funn.Diff.Diff (Derivable(..), Diff(..))
 import           AI.Funn.CL.Code as C
 
-lstmDiff :: forall n a s. (KnownNat n, CLNum a)
-         => Diff (OpenCL s)
-            (Blob s (2*n) a, (Blob s n a, Blob s (4*n) a))
-            (Blob s n a, Blob s n a)
+lstmDiff :: forall n m a. (MonadIO m, KnownNat n, CLNum a)
+         => Diff m
+            (Blob (2*n) a, (Blob n a, Blob (4*n) a))
+            (Blob n a, Blob n a)
 lstmDiff = Diff run
   where
     run (ws, (cs, xs)) = do
-      (store :: MBlob s (8 * n) Double) <- createBlob @ (8 * n)
+      (store :: MBlob (8 * n) a) <- createBlob @ (8 * n)
       new_cs <- createBlob
       ys <- createBlob
       (runKernel forwardSrc "run"

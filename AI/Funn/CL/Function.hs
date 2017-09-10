@@ -31,43 +31,43 @@ import AI.Funn.CL.Code
 import AI.Funn.CL.MonadCL
 import qualified Foreign.OpenCL.Bindings as CL
 
-class Argument x => CLType a x s | a -> x where
-  karg :: a -> KernelArg s
+class Argument x => CLType a x | a -> x where
+  karg :: a -> KernelArg
 
-instance CLType Float (Expr Float) s where
+instance CLType Float (Expr Float) where
   karg x = KernelArg (\f -> f [CL.VArg x])
-instance CLType Double (Expr Double) s where
+instance CLType Double (Expr Double) where
   karg x = KernelArg (\f -> f [CL.VArg x])
-instance CLType Int (Expr Int) s where
+instance CLType Int (Expr Int) where
   karg x = KernelArg (\f -> f [CL.VArg (fromIntegral x :: Int32)])
 
-data KFun s f where
-  Arg :: (a -> KFun s as) -> KFun s (a -> as)
-  Done :: KernelArg s -> (KernelArg s -> [Int] -> OpenCL s ()) -> KFun s (OpenCL s ())
+data KFun f where
+  Arg :: (a -> KFun as) -> KFun (a -> as)
+  Done :: KernelArg -> (KernelArg -> [Int] -> IO ()) -> KFun (IO ())
 
-consArg :: KernelArg s -> KFun s xs -> KFun s xs
+consArg :: KernelArg -> KFun xs -> KFun xs
 consArg arg (Done as run) = Done (arg <> as) run
 consArg arg (Arg f) = Arg (consArg arg . f)
 
-class ToKernel g => CLFunc s as g | as -> g, as -> s where
-  func :: String -> KFun s as
-  func' :: g -> KFun s as
+class ToKernel g => CLFunc as g | as -> g, as -> where
+  func :: String -> KFun as
+  func' :: g -> KFun as
 
-instance CLFunc s (OpenCL s ()) (CL ()) where
+instance CLFunc (IO ()) (CL ()) where
   func src = Done mempty (\args ranges -> runKernel src "run" [args] [] (map fromIntegral ranges) [])
   func' g = func (kernel g)
 
-instance (CLFunc s as gr, CLType a x s) => CLFunc s (a -> as) (x -> gr) where
+instance (CLFunc as gr, CLType a x) => CLFunc (a -> as) (x -> gr) where
   func src = Arg (\a -> consArg (karg a) next)
     where
       next = func src
   func' g = func (kernel g)
 
-runfun :: KFun s f -> [Int] -> f
+runfun :: KFun f -> [Int] -> f
 runfun (Done args run) range = run args range
 runfun (Arg k) range = \a -> runfun (k a) range
 
-clfun :: CLFunc s f g => g -> [Int] -> f
+clfun :: CLFunc f g => g -> [Int] -> f
 clfun g = runfun k
   where
     k = func' g
