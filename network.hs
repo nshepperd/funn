@@ -18,6 +18,7 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.ByteString.Lazy.Char8 as LC
 import           Data.Char
+import           Data.Functor.Identity
 import           Data.Foldable
 import           Data.IORef
 import           Data.List
@@ -59,6 +60,7 @@ import           AI.Funn.Network.Flat
 import           AI.Funn.Network.LSTM
 import           AI.Funn.Network.Mixing
 import           AI.Funn.Network.Network
+import qualified AI.Funn.Network.Network as Network
 import           AI.Funn.Network.RNN
 import           AI.Funn.SGD
 import           AI.Funn.Space
@@ -74,10 +76,10 @@ unfoldM :: Monad m => Int -> m a -> m [a]
 unfoldM 0 m = return []
 unfoldM n m = (:) <$> m <*> unfoldM (n-1) m
 
-onehot :: Vector (Blob 128)
-onehot = V.generate 128 (\i -> Blob.fromList (replicate i 0 ++ [1] ++ replicate (127 - i) 0))
+onehot :: Vector (Blob 256)
+onehot = V.generate 256 (\i -> Blob.fromList (replicate i 0 ++ [1] ++ replicate (255 - i) 0))
 
-sampleRNN :: Int -> s -> (s -> Blob 128 -> IO (s, Blob 128)) -> IO [Char]
+sampleRNN :: Int -> s -> (s -> Blob 256 -> IO (s, Blob 256)) -> IO [Char]
 sampleRNN n s0 next = SL.evalStateT (unfoldM n step) (s0, 0)
   where
     step = do
@@ -92,6 +94,7 @@ sampleRNN n s0 next = SL.evalStateT (unfoldM n step) (s0, 0)
 
 data Commands = Train (Maybe FilePath) FilePath (Maybe FilePath) (Maybe FilePath) Int Double Integer
               | Sample FilePath (Maybe Int)
+              | Measure FilePath FilePath
               deriving (Show)
 
 instance (Additive m a, Applicative m) => Zero m (Vector a) where
@@ -106,19 +109,19 @@ instance (Additive m a, Monad m) => Semi m (Vector a) where
 instance (Additive m a, Monad m) => Additive m (Vector a) where
   {}
 
-step :: (Monad m, KnownNat size) => Proxy size -> Network m ((Blob size, Blob size), Blob 128) ((Blob size, Blob size), Blob 128)
+step :: (Monad m, KnownNat size) => Proxy size -> Network m ((Blob size, Blob size), Blob 256) ((Blob size, Blob size), Blob 256)
 step Proxy = assocR
              >>> second (mergeLayer >>> amixLayer (Proxy @ 5) >>> tanhLayer) -- (Blob n, Blob 4n)
              >>> lstmLayer                                                   -- (Blob n, Blob n)
              >>> second dupLayer >>> assocL >>> second (amixLayer (Proxy @ 5))
 
-network :: (Monad m, KnownNat size) => Proxy size -> Network m (Vector (Blob 128)) (Vector (Blob 128))
+network :: (Monad m, KnownNat size) => Proxy size -> Network m (Vector (Blob 256)) (Vector (Blob 256))
 network size = addParams (Blob.generate (pure 0)) $
-                first splitLayer               -- ((Blob n, Blob n), Vector (Blob 128))
-                >>> scanlLayer (step size)     -- ((Blob n, Blob n), Vector (Blob 128))
+                first splitLayer               -- ((Blob n, Blob n), Vector (Blob 256))
+                >>> scanlLayer (step size)     -- ((Blob n, Blob n), Vector (Blob 256))
                 >>> sndNetwork
 
-evalNetwork :: (Monad m, KnownNat size) => Proxy size -> Network m (Vector (Blob 128), Vector Int) Double
+evalNetwork :: (Monad m, KnownNat size) => Proxy size -> Network m (Vector (Blob 256), Vector Int) Double
 evalNetwork size = first (network size) >>> zipLayer >>> mapLayer softmaxCost >>> vsumLayer
 
 openNetwork :: forall m n a b. KnownNat n => Network m a b -> Maybe (Diff m (Blob n, a) b, RVar (Blob n))
@@ -129,9 +132,9 @@ openNetwork (Network p diff initial) =
 
 data Model m size where
   Model :: KnownNat p => {
-    modelStep :: Diff m (Blob p, ((Blob size, Blob size), Blob 128)) ((Blob size, Blob size), Blob 128),
-    modelRun :: Diff m (Blob (p + 2*size), Vector (Blob 128)) (Vector (Blob 128)),
-    modelEval :: Diff m (Blob (p + 2*size), (Vector (Blob 128), Vector Int)) Double,
+    modelStep :: Diff m (Blob p, ((Blob size, Blob size), Blob 256)) ((Blob size, Blob size), Blob 256),
+    modelRun :: Diff m (Blob (p + 2*size), Vector (Blob 256)) (Vector (Blob 256)),
+    modelEval :: Diff m (Blob (p + 2*size), (Vector (Blob 256), Vector Int)) Double,
     modelInit :: RVar (Blob (p + 2*size))
     } -> Model m size
 
@@ -144,6 +147,18 @@ model size = case step size of
 
 runrnn :: Monad m => Diff m (par, (s, c)) (s, c) -> par -> s -> c -> m (s, c)
 runrnn diff par s c = Diff.runDiffForward diff (par, (s, c))
+
+measureRNN :: Diff Identity (par, (s, Blob 256)) (s, Blob 256) -> par -> s -> LB.ByteString -> Double
+measureRNN step par s bs = go s 0 bs
+  where
+    go s char bs
+      | LB.null bs = 0
+      | otherwise  = case Diff.runDiffForward step (par, (s, onehot V.! fromIntegral char)) of
+                       Identity (s', prediction) -> prob (getBlob prediction) (LB.head bs) + go s' (LB.head bs) (LB.tail bs)
+    prob ps c = ps V.! (fromIntegral c) - factor
+      where
+        exps = V.map exp ps
+        factor = log (V.sum exps)
 
 train :: (KnownNat modelSize) => Proxy modelSize -> Maybe ParBox -> FilePath -> (Maybe FilePath) -> (Maybe FilePath) -> Int -> Double -> IO ()
 train modelSize initialParameters input savefile logfile chunkSize learningRate =
@@ -163,10 +178,10 @@ train modelSize initialParameters input savefile logfile chunkSize learningRate 
             iteration <- newIORef (0 :: Int)
             startTime <- getTime ProcessCPUTime
             let
-              tvec = V.fromList (filter (<128) $ B.unpack text) :: U.Vector Word8
-              ovec = V.map (\c -> onehot V.! (fromIntegral c)) (V.convert tvec) :: Vector (Blob 128)
+              tvec = V.fromList (B.unpack text) :: U.Vector Word8
+              ovec = V.map (\c -> onehot V.! (fromIntegral c)) (V.convert tvec) :: Vector (Blob 256)
 
-              source :: IO (Vector (Blob 128), Vector Int)
+              source :: IO (Vector (Blob 256), Vector Int)
               source = do s <- sampleIO (uniform 0 (V.length tvec - chunkSize))
                           let
                             input = (onehot V.! 0) `V.cons` V.slice s (chunkSize - 1) ovec
@@ -228,7 +243,14 @@ main = do
                          (info (Sample
                                 <$> strOption (long "snapshot" <> action "file")
                                 <*> optional (option auto (long "length")))
-                          (progDesc "Sample output.")))
+                          (progDesc "Sample output."))
+                         <>
+                         command "measure"
+                         (info (Measure
+                               <$> strOption (long "snapshot" <> action "file")
+                               <*> strOption (long "input" <> action "file"))
+                          (progDesc "Sample output."))
+                        )
                    fullDesc)
 
   cmd <- customExecParser (prefs showHelpOnError) optparser
@@ -255,4 +277,17 @@ main = do
                 let (par, c0) = Blob.split parameters
                 msg <- sampleRNN n (Blob.split c0) (runrnn modelStep par)
                 putStrLn msg
+              Nothing -> error "model mismatch"
+
+    Measure initpath inputpath -> do
+      (modelSize, box) <- LB.decode <$> LB.readFile initpath
+      text <- LB.readFile inputpath
+      withNat modelSize $ \(proxy :: Proxy modelSize) ->
+        case model proxy of
+          Model modelStep modelRun modelEval modelInit ->
+            case openParBox box of
+              Just parameters -> do
+                deepseqM parameters
+                let (par, c0) = Blob.split parameters
+                print $ measureRNN modelStep par (Blob.split c0) text
               Nothing -> error "model mismatch"
