@@ -2,6 +2,9 @@
 {-# LANGUAGE BangPatterns, MultiParamTypeClasses, FlexibleInstances #-}
 {-# LANGUAGE TypeOperators, GADTs, ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications, DataKinds #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
+{-# OPTIONS_GHC -fconstraint-solver-iterations=20 #-}
 module AI.Funn.Network.Network (
   Network(..),
   -- runNetwork, runNetwork', runNetwork_,

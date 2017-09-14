@@ -1,6 +1,9 @@
 {-# LANGUAGE TypeFamilies, DataKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
+{-# OPTIONS_GHC -fconstraint-solver-iterations=20 #-}
 module AI.Funn.Network.Mixing (amixLayer) where
 
 import           GHC.TypeLits

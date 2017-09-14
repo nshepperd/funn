@@ -4,8 +4,9 @@
 {-# LANGUAGE FlexibleInstances, MultiParamTypeClasses #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ConstraintKinds #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
-{-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
+{-# OPTIONS_GHC -fconstraint-solver-iterations=20 #-}
 module Main where
 
 import           Control.Applicative

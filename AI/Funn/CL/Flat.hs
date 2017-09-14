@@ -3,6 +3,9 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeOperators #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
+{-# OPTIONS_GHC -fconstraint-solver-iterations=20 #-}
 module AI.Funn.CL.Flat (
   reluDiff, sigmoidDiff, tanhDiff,
   fcDiff, quadraticCost, splitDiff, mergeDiff,

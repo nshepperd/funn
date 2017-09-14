@@ -1,8 +1,9 @@
 {-# LANGUAGE TypeFamilies, MultiParamTypeClasses, FlexibleContexts, FlexibleInstances #-}
 {-# LANGUAGE KindSignatures, DataKinds, TypeOperators #-}
 {-# LANGUAGE ScopedTypeVariables, TypeApplications #-}
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE ForeignFunctionInterface #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
+{-# OPTIONS_GHC -fconstraint-solver-iterations=20 #-}
 module AI.Funn.Network.Flat (sumLayer, fcLayer,
                              preluLayer, reluLayer, sigmoidLayer,
                              mergeLayer, splitLayer, tanhLayer,

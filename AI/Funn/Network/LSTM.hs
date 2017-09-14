@@ -1,6 +1,9 @@
 {-# LANGUAGE TypeFamilies, KindSignatures, DataKinds, TypeOperators #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
+{-# OPTIONS_GHC -fconstraint-solver-iterations=20 #-}
 module AI.Funn.Network.LSTM (lstmLayer) where
 
 import           GHC.TypeLits
