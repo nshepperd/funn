@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
@@ -22,59 +23,77 @@ import           Debug.Trace
 import qualified Foreign.OpenCL.Bindings as CL
 import           GHC.Float
 import           GHC.TypeLits
+import           System.IO.Unsafe
 
 import           AI.Funn.CL.Blob
 import qualified AI.Funn.CL.Blob as Blob
-import           AI.Funn.CL.Code as C
+import           AI.Funn.CL.DSL.Code as C
+import           AI.Funn.CL.Function
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.Diff.Diff (Derivable(..), Diff(..))
 import           AI.Funn.Space
 import           AI.Funn.TypeLits
 
-reluDiff :: forall n m a. (MonadIO m, KnownNat n, Relational a, CLNum a) => Diff m (Blob a n) (Blob a n)
+data KName = ReluF Precision
+           | ReluB Precision
+           | SigmoidF Precision
+           | SigmoidB Precision
+           | TanhF Precision
+           | TanhB Precision
+           | FCForward Precision
+           | FCBackWS Precision
+           | FCBackXS Precision
+           | FCBackBS Precision
+  deriving (Show, Eq, Ord)
+
+{-# NOINLINE memoTable #-}
+memoTable :: KTable KName
+memoTable = newKTable unsafePerformIO
+
+reluDiff :: forall n m a. (MonadIO m, KnownNat n, Relational a, CLFloats a) => Diff m (Blob a n) (Blob a n)
 reluDiff = Diff run
   where
     run xs = do
       ys <- relu xs
       return (ys, reluBack xs)
 
-    relu = mapBlob' (\x -> fmax 0 x)
-    reluBack = zipWithBlob' (\x dy -> fstep 0 x * dy)
+    relu = mapBlob' memoTable (ReluF (precision @a)) (\x -> fmax 0 x)
+    reluBack = zipWithBlob' memoTable (ReluB (precision @a)) (\x dy -> fstep 0 x * dy)
 
-sigmoidDiff :: forall n m a. (MonadIO m, KnownNat n, CLFloating a) => Diff m (Blob a n) (Blob a n)
+sigmoidDiff :: forall n m a. (MonadIO m, KnownNat n, CLFloats a) => Diff m (Blob a n) (Blob a n)
 sigmoidDiff = Diff run
   where
     run xs = do
       ys <- sigmoid xs
       return (ys, sigmoidBack xs)
 
-    sigmoid = mapBlob $ \x -> do
+    sigmoid = mapBlob memoTable (SigmoidF (precision @a)) $ \x -> do
       z <- eval (exp x)
       return $ z / (1 + z)
 
-    sigmoidBack = zipWithBlob $ \x dy -> do
+    sigmoidBack = zipWithBlob memoTable (SigmoidB (precision @a)) $ \x dy -> do
       z <- eval $ exp (-abs x)
       return $ dy * z / (1 + z)^2
 
-tanhDiff :: forall n m a. (MonadIO m, KnownNat n, CLFloating a) => Diff m (Blob a n) (Blob a n)
+tanhDiff :: forall n m a. (MonadIO m, KnownNat n, CLFloats a) => Diff m (Blob a n) (Blob a n)
 tanhDiff = Diff run
   where
     run xs = do
       ys <- tanhForward xs
       return (ys, tanhBack xs)
 
-    tanhForward = mapBlob $ \x -> do
+    tanhForward = mapBlob memoTable (TanhF (precision @a)) $ \x -> do
       zp <- eval (exp x)
       zm <- eval (exp (-x))
       return $ (zp - zm) / (zp + zm)
 
-    tanhBack = zipWithBlob $ \x dy -> do
+    tanhBack = zipWithBlob memoTable (TanhB (precision @a)) $ \x dy -> do
       zp <- eval $ exp x
       zm <- eval $ exp (-x)
       z <- eval $ 2 / (zp + zm)
       return $ dy * z^2
 
-quadraticCost :: forall n m a. (MonadIO m, KnownNat n, CLNum a, Floats a) => Diff m (Blob a n, Blob a n) Double
+quadraticCost :: forall n m a. (MonadIO m, KnownNat n, CLFloats a) => Diff m (Blob a n, Blob a n) Double
 quadraticCost = Diff run
   where
     run (xs, ys) = do
@@ -88,7 +107,7 @@ quadraticCost = Diff run
       dy <- scaleBlob (-2 * δ) ds
       return (dx, dy)
 
-softmaxCost :: (MonadIO m, KnownNat n, CLNum a, Floats a) => Diff m (Blob a n, Int) Double
+softmaxCost :: (MonadIO m, KnownNat n, CLFloats a, Floats a) => Diff m (Blob a n, Int) Double
 softmaxCost = Diff run
   where run (bo, target) = do
           oslist <- Blob.toList bo
@@ -110,15 +129,13 @@ softmaxCost = Diff run
           backblob <- Blob.fromList (V.toList back)
           return (backblob, ())
 
-fcDiff :: forall α β a m. (MonadIO m, KnownNat α, KnownNat β, CLNum a) =>
+fcDiff :: forall α β a m. (MonadIO m, KnownNat α, KnownNat β, CLFloats a) =>
           Diff m (Blob a (α * β + β), Blob a α) (Blob a β)
 fcDiff = Diff run
   where
     run (pars, xs) = do
       ys <- createBlob
-      (runKernel forwardK "run"
-       [int32Arg α, int32Arg β, blobArg pars, blobArg xs, blobArg ys]
-       [] [β] [1])
+      liftIO $ forwardK [β] α β pars xs ys
       frozen_ys <- unsafeFreeze ys
       return (frozen_ys, backward pars xs)
 
@@ -126,15 +143,10 @@ fcDiff = Diff run
       dpars <- createBlob
       dxs <- createBlob
       let (dws :: MBlob a (α * β), dbs :: MBlob a β) = splitBlob dpars
-      (runKernel backwardwsK "run"
-       [int32Arg α, blobArg xs, blobArg dys, blobArg dws]
-       [] [α, β] [1, 1])
-      (runKernel backwardxsK "run"
-       [int32Arg α, int32Arg β, blobArg pars, blobArg dys, blobArg dxs]
-       [] [α] [1])
-      (runKernel backwardbsK "run"
-       [blobArg dys, blobArg dbs]
-       [] [β] [1])
+      liftIO $ do
+        backwardwsK [α, β] α xs dys dws
+        backwardxsK [α] α β pars dys dxs
+        backwardbsK [β] dys dbs
       frozen_dpars <- unsafeFreeze dpars
       frozen_dxs <- unsafeFreeze dxs
       return (frozen_dpars, frozen_dxs)
@@ -151,7 +163,8 @@ fcDiff = Diff run
         total .= t;
       return total
 
-    forwardK = C.kernel forwardSrc
+    forwardK :: [Int] -> Int -> Int -> Blob a (α * β + β) -> Blob a α -> MBlob a β -> IO ()
+    forwardK = memoc memoTable (FCForward (precision @a)) forwardSrc
     forwardSrc :: Expr Int -> Expr Int -> ArrayR a -> ArrayR a -> ArrayW a -> CL ()
     forwardSrc α β pars xs ys = do
       y <- get_global_id 0
@@ -160,14 +173,16 @@ fcDiff = Diff run
       total <- kahan (pars `at` (α*β + y)) inputs α
       at ys y .= total
 
-    backwardwsK = C.kernel backwardwsSrc
+    backwardwsK :: [Int] -> Int -> Blob a α -> Blob a β -> MBlob a (α * β) -> IO ()
+    backwardwsK = memoc memoTable (FCBackWS (precision @a)) backwardwsSrc
     backwardwsSrc :: Expr Int -> ArrayR a -> ArrayR a -> ArrayW a -> CL ()
     backwardwsSrc α xs dys dws = do
       x <- get_global_id 0
       y <- get_global_id 1
       at dws (y * α + x) .= (xs `at` x) * (dys `at` y)
 
-    backwardxsK = C.kernel backwardxsSrc
+    backwardxsK :: [Int] -> Int -> Int -> Blob a (α * β + β) -> Blob a β -> MBlob a α -> IO ()
+    backwardxsK = memoc memoTable (FCBackXS (precision @a)) backwardxsSrc
     backwardxsSrc :: Expr Int -> Expr Int -> ArrayR a -> ArrayR a -> ArrayW a -> CL ()
     backwardxsSrc α β pars dys dxs = do
       x <- get_global_id 0
@@ -176,7 +191,8 @@ fcDiff = Diff run
       total <- kahan 0 inputs β
       at dxs x .= total
 
-    backwardbsK = C.kernel backwardbsSrc
+    backwardbsK :: [Int] -> Blob a β -> MBlob a β -> IO ()
+    backwardbsK = memoc memoTable (FCBackBS (precision @a)) backwardbsSrc
     backwardbsSrc :: ArrayR a -> ArrayW a -> CL ()
     backwardbsSrc dys dbs = do
       y <- get_global_id 0
@@ -185,14 +201,14 @@ fcDiff = Diff run
     α = fromIntegral $ natVal (Proxy :: Proxy α)
     β = fromIntegral $ natVal (Proxy :: Proxy β)
 
-splitDiff :: forall α β a m. (MonadIO m, KnownNat α, KnownNat β, CLNum a) =>
+splitDiff :: forall α β a m. (MonadIO m, KnownNat α, KnownNat β, CLFloats a) =>
              Diff m (Blob a (α + β)) (Blob a α, Blob a β)
 splitDiff = Diff run
   where
     run ab = pure (splitBlob ab, backward)
     backward (da, db) = catBlob da db
 
-mergeDiff :: forall α β a m. (MonadIO m, KnownNat α, KnownNat β, CLNum a) =>
+mergeDiff :: forall α β a m. (MonadIO m, KnownNat α, KnownNat β, CLFloats a) =>
              Diff m (Blob a α, Blob a β) (Blob a (α + β))
 mergeDiff = Diff run
   where

@@ -32,6 +32,9 @@ import           AI.Funn.CL.Flat
 import           AI.Funn.CL.LSTM
 import           AI.Funn.CL.Mixing
 import qualified AI.Funn.Flat.Blob as C
+import qualified AI.Funn.Flat.Flat as C
+import qualified AI.Funn.Flat.LSTM as C
+import qualified AI.Funn.Flat.Mixing as C
 import           AI.Funn.Space
 
 import Testing.Util
@@ -45,6 +48,15 @@ checkGradientCL :: (Loadable a n1, D a ~ a,
                     Loadable b n2, D b ~ b)
                => Diff IO a b -> Property
 checkGradientCL diff = checkGradient 1e8 0.001 1e-4 clProperty (fromCPUDiff >>> diff >>> fromGPUDiff)
+
+checkSameCL :: (Loadable a n1, D a ~ a,
+                Loadable b n2, D b ~ b,
+                Loadable c n1, D c ~ c,
+                Loadable d n2, D d ~ d)
+            => Diff IO a b -> Diff IO c d -> Property
+checkSameCL diff1 diff2 = (checkSame clProperty
+                           (fromCPUDiff >>> diff1 >>> fromGPUDiff)
+                           (fromCPUDiff >>> diff2 >>> fromGPUDiff))
 
 fromCPUDiff :: (Loadable a n, Loadable (D a) n) => Diff (IO) (C.Blob n) a
 fromCPUDiff = Diff run
@@ -71,6 +83,10 @@ instance Loadable Double 1 where
 instance (KnownNat n, Floats a) => Loadable (Blob a n) n where
   fromCPU a = Blob.fromList (C.toList a)
   fromGPU a = C.fromList <$> Blob.toList a
+
+instance (KnownNat n) => Loadable (C.Blob n) n where
+  fromCPU a = return a
+  fromGPU a = return a
 
 instance (KnownNat m, Loadable a n1, Loadable b n2, m ~ (n1 + n2)) => Loadable (a, b) m where
   fromCPU ab = (,) <$> fromCPU a <*> fromCPU b
@@ -187,6 +203,33 @@ prop_lstmdiff = checkGradientCL (lstmDiff @2 @IO @Double)
 
 prop_mixdiff :: Property
 prop_mixdiff = checkGradientCL (amixDiff @3 @2 @2 @Double Proxy)
+
+prop_softmaxcost :: Property
+prop_softmaxcost = checkGradientCL (putR 0 >>> softmaxCost @IO @3 @Double)
+
+-- Equality
+
+prop_fcdiff_eq :: Property
+prop_fcdiff_eq = checkSameCL (fcDiff @2 @2 @Double) (C.fcDiff @2 @2)
+
+prop_relu_eq :: Property
+prop_relu_eq = checkSameCL (reluDiff @3 @IO @Double) (C.reluDiff)
+
+prop_sigmoid_eq :: Property
+prop_sigmoid_eq = checkSameCL (sigmoidDiff @3 @IO @Double) (C.sigmoidDiff)
+
+prop_tanh_eq :: Property
+prop_tanh_eq = checkSameCL (tanhDiff @3 @IO @Double) (C.tanhDiff)
+
+prop_lstm_eq :: Property
+prop_lstm_eq = checkSameCL (lstmDiff @3 @IO @Double) (C.lstmDiff @3)
+
+prop_mix_eq :: Property
+prop_mix_eq = checkSameCL (amixDiff @3 @2 @2 @Double Proxy) (C.amixDiff @3 @2 @2 Proxy)
+
+prop_softmaxcost_eq :: Property
+prop_softmaxcost_eq = checkSameCL (putR 0 >>> softmaxCost @IO @3 @Double) (putR 0 >>> C.softmaxCost)
+
 
 -- Make TemplateHaskell aware of above definitions.
 $(return [])

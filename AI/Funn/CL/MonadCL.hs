@@ -11,7 +11,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 module AI.Funn.CL.MonadCL (
   initOpenCL, getPlatformID, getContext, getDeviceID, getCommandQueue,
-  KernelArg(..), doubleArg, int32Arg, runKernel
+  KernelArg(..), doubleArg, int32Arg, runKernel, runCompiled
   ) where
 
 import           Control.Applicative
@@ -128,13 +128,19 @@ int32Arg a = KernelArg run
   where
     run f = f [CL.VArg (fromIntegral a :: Int32)]
 
+runCompiled :: MonadIO m => CL.Kernel -> [KernelArg] -> [CL.ClSize] -> [CL.ClSize] -> [CL.ClSize] -> m ()
+runCompiled kernel args globalOffsets globalSizes localSizes = do
+  queue <- getCommandQueue
+  let go [] real_args = do
+        CL.setKernelArgs kernel (real_args [])
+        ev <- CL.enqueueNDRangeKernel queue kernel globalOffsets globalSizes localSizes []
+        CL.waitForEvents [ev]
+      go (KernelArg f : fs) real_args = f (\arg -> go fs (real_args . (arg++)))
+  liftIO $ go args id
+
+
 runKernel :: MonadIO m => String -> String  -> [KernelArg] -> [CL.ClSize] -> [CL.ClSize] -> [CL.ClSize] -> m ()
 runKernel source entryPoint args globalOffsets globalSizes localSizes =
-  do queue <- getCommandQueue
+  do liftIO $ putStrLn "Hitting slow cache."
      kernel <- getKernel (source ++ "/" ++ entryPoint) source entryPoint
-     let go [] real_args = do
-           CL.setKernelArgs kernel (real_args [])
-           ev <- CL.enqueueNDRangeKernel queue kernel globalOffsets globalSizes localSizes []
-           CL.waitForEvents [ev]
-         go (KernelArg f : fs) real_args = f (\arg -> go fs (real_args . (arg++)))
-     liftIO $ go args id
+     runCompiled kernel args globalOffsets globalSizes localSizes

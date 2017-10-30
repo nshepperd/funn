@@ -10,19 +10,21 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
-module AI.Funn.CL.Code where
+{-# LANGUAGE TypeOperators #-}
+module AI.Funn.CL.DSL.Code where
 
-import Control.Monad
-import Control.Monad.Free
-import Data.Foldable
-import Data.List
-import Data.Monoid
-import Data.Traversable
-import Data.Ratio
-import Foreign.Ptr
-import Foreign.Storable
+import           Control.Monad
+import           Control.Monad.Free
+import           Data.Foldable
+import           Data.List
+import           Data.Monoid
+import           Data.Ratio
+import           Data.Traversable
+import           Foreign.Ptr
+import           Foreign.Storable
 
-import qualified AI.Funn.CL.AST as AST
+import qualified AI.Funn.CL.DSL.AST as AST
+import           AI.Funn.Space
 
 newtype Var a = Var { varName :: AST.Name }
 newtype Expr a = Expr AST.Expr
@@ -55,19 +57,25 @@ instance Variable a => Argument (Expr a) where
 
   -- Function -> Kernel
 
-class ToKernel a where
+newtype KernelSource (xs :: [*]) = KernelSource String
+  deriving Show
+
+class ToKernel a xs | a -> xs, xs -> a where
   toKernel :: Int -> a -> AST.Kernel
+  kernel :: a -> KernelSource xs
 
-instance ToKernel (CL ()) where
+instance ToKernel (CL ()) '[] where
   toKernel n cl = AST.Kernel "run" [] (runCL cl)
+  kernel cl = KernelSource (AST.printKernel (toKernel 0 cl))
 
-instance (Argument a, ToKernel r) => ToKernel (a -> r) where
+instance (Argument a, ToKernel r rs) => ToKernel (a -> r) (a : rs) where
   toKernel n f = let (a, args) = declareArgument ("arg" ++ show n)
                      AST.Kernel name args' body = toKernel (n+1) (f a)
                  in AST.Kernel name (args ++ args') body
+  kernel cl = KernelSource (AST.printKernel (toKernel 0 cl))
 
-kernel :: ToKernel a => a -> String
-kernel a = AST.printKernel (toKernel 0 a)
+kernelStr :: ToKernel a xs => a -> String
+kernelStr a = AST.printKernel (toKernel 0 a)
 
   -- Operational Monad
 
@@ -214,6 +222,9 @@ type CLFractional a = (Storable a, Fractional (Expr a), Literal a,
                        Variable a, Argument (Array W a), Argument (Array R a))
 type CLFloating a = (Storable a, Floating (Expr a), Literal a,
                       Variable a, Argument (Array W a), Argument (Array R a))
+type CLFloats a = (Storable a, Floating (Expr a), Literal a,
+                   Variable a, Argument (Array W a), Argument (Array R a),
+                   Floats a)
 
 constant :: String -> Expr a
 constant name = Expr (AST.ExprLit name)

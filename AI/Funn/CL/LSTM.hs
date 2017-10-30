@@ -11,50 +11,35 @@ module AI.Funn.CL.LSTM (lstmDiff) where
 import           Control.Applicative
 import           Control.Monad
 import           Control.Monad.IO.Class
+import           Data.IORef
+import           Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import           Data.Proxy
+import qualified Foreign.OpenCL.Bindings as CL
 import           GHC.TypeLits
+import           System.IO.Unsafe
 
 import           AI.Funn.CL.Blob
 import qualified AI.Funn.CL.Blob as Blob
-import           AI.Funn.CL.Code as C
+import           AI.Funn.CL.DSL.Code as C
+import           AI.Funn.CL.Function
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.Diff.Diff (Derivable(..), Diff(..))
+import           AI.Funn.Space
 import           AI.Funn.TypeLits
 
-lstmDiff :: forall n m a. (MonadIO m, KnownNat n, CLNum a)
-         => Diff m
-            (Blob a (2*n), (Blob a n, Blob a (4*n)))
-            (Blob a n, Blob a n)
-lstmDiff = Diff run
+data KName = Forward Precision
+           | Backward Precision
+  deriving (Show, Eq, Ord)
+
+{-# NOINLINE memoTable #-}
+memoTable :: KTable KName
+memoTable = newKTable unsafePerformIO
+
+forwardSrc :: forall a. (CLFloats a) => KernelProgram '[ArrayR a, ArrayR a, ArrayR a,
+                                                        ArrayW a, ArrayW a, ArrayW a]
+forwardSrc = memo memoTable (Forward (precision @a)) $ compile forwardKernel
   where
-    run (ws, (cs, xs)) = do
-      (store :: MBlob a (8 * n)) <- createBlob @ (8 * n)
-      new_cs <- createBlob
-      ys <- createBlob
-      (runKernel forwardSrc "run"
-       [blobArg ws, blobArg cs, blobArg xs, blobArg store, blobArg new_cs, blobArg ys]
-       [] [fromIntegral n] [])
-      frozen_store <- unsafeFreeze store
-      frozen_new_cs <- unsafeFreeze new_cs
-      frozen_ys <- unsafeFreeze ys
-      return ((frozen_new_cs, frozen_ys), backward ws frozen_store)
-
-    backward ws store (dcs', dys) = do
-      dws <- createBlob
-      dcs <- createBlob
-      dxs <- createBlob
-      (runKernel backwardSrc "run"
-       [blobArg ws, blobArg store, blobArg dcs', blobArg dys,
-        blobArg dws, blobArg dcs, blobArg dxs]
-       [] [fromIntegral n] [])
-
-      frozen_dws <- unsafeFreeze dws
-      frozen_dcs <- unsafeFreeze dcs
-      frozen_dxs <- unsafeFreeze dxs
-      return (frozen_dws, (frozen_dcs, frozen_dxs))
-
-
-    forwardSrc = C.kernel forwardKernel
     forwardKernel :: ArrayR a -> ArrayR a -> ArrayR a
                   -> ArrayW a -> ArrayW a -> ArrayW a
                   -> CL ()
@@ -91,7 +76,40 @@ lstmDiff = Diff run
       at cs' i .= cell_new
       at ys i .= y
 
-    backwardSrc = C.kernel backwardKernel
+lstmDiff :: forall n m a. (MonadIO m, KnownNat n, CLFloats a)
+         => Diff m
+            (Blob a (2*n), (Blob a n, Blob a (4*n)))
+            (Blob a n, Blob a n)
+lstmDiff = Diff run
+  where
+    run (ws, (cs, xs)) = do
+      (store :: MBlob a (8 * n)) <- createBlob @ (8 * n)
+      new_cs <- createBlob
+      ys <- createBlob
+      liftIO $ forwardRun [fromIntegral n] ws cs xs store new_cs ys
+      frozen_store <- unsafeFreeze store
+      frozen_new_cs <- unsafeFreeze new_cs
+      frozen_ys <- unsafeFreeze ys
+      return ((frozen_new_cs, frozen_ys), backward ws frozen_store)
+
+    forwardRun :: [Int] -> Blob a (2*n) -> Blob a n -> Blob a (4*n)
+               -> MBlob a (8*n) -> MBlob a n -> MBlob a n -> IO ()
+    forwardRun = clfun forwardSrc
+
+
+    backward ws store (dcs', dys) = do
+      dws <- createBlob
+      dcs <- createBlob
+      dxs <- createBlob
+      liftIO (backwardRun [fromIntegral n] ws store dcs' dys dws dcs dxs)
+      frozen_dws <- unsafeFreeze dws
+      frozen_dcs <- unsafeFreeze dcs
+      frozen_dxs <- unsafeFreeze dxs
+      return (frozen_dws, (frozen_dcs, frozen_dxs))
+
+    backwardRun :: [Int] -> Blob a (2*n) -> Blob a (8*n) -> Blob a n -> Blob a n
+                -> MBlob a (2*n) -> MBlob a n -> MBlob a (4*n) -> IO ()
+    backwardRun = memoc memoTable (Backward (precision @a)) backwardKernel
     backwardKernel :: ArrayR a -> ArrayR a -> ArrayR a -> ArrayR a
                    -> ArrayW a -> ArrayW a -> ArrayW a
                    -> CL ()

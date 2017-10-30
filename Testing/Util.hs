@@ -98,6 +98,29 @@ checkGradientI :: (Finite Identity Double a, D a ~ a,
                => Diff Identity a b -> Property
 checkGradientI = checkGradient 1e8 0.001 1e-4 runIdentity
 
+magnitude x = inner x x
+
+checkSame :: (Monad m,
+              Finite m Double a, D a ~ a,
+              Finite m Double b, D b ~ b,
+              Arbitrary a, Arbitrary b,
+              Show a, Show b, Eq b)
+          => (m Property -> Property)
+          -> Diff m a b
+          -> Diff m a b
+          -> Property
+checkSame eval diff1 diff2 = monadic eval $ do
+  a <- pick arbitrary
+  asize <- lift (magnitude a)
+  pre (asize < 1000)
+  b1 <- lift (Diff.runDiffForward diff1 a)
+  b2 <- lift (Diff.runDiffForward diff2 a)
+  monitor (counterexample $ show (b1, b2))
+  d <- lift (magnitude =<< minus b1 b2)
+  m <- lift (magnitude =<< plus b1 b2)
+  assert (d * 100000 <= m)
+
+
 putR :: Applicative m => b -> Diff m a (a, b)
 putR b = Diff run
   where

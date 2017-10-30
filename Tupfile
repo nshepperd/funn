@@ -2,4 +2,6 @@ include_rules
 
 run $(HCC) ./*.hs
 
-: foreach *.o | AI/Funn/*.o AI/Funn/Diff/*.o AI/Funn/Network/*.o AI/Funn/Flat/*.o c/*.o AI/Funn/CL/*.o |> !ghc AI/Funn/*.o AI/Funn/Diff/*.o AI/Funn/Network/*.o AI/Funn/Flat/*.o AI/Funn/CL/*.o c/*.o |> %B
+LIBS = AI/Funn/*.o AI/Funn/Diff/*.o AI/Funn/Network/*.o AI/Funn/Flat/*.o c/*.o AI/Funn/CL/*.o AI/Funn/CL/DSL/*.o
+
+: foreach *.o | $(LIBS)  |> !ghc $(LIBS) |> %B

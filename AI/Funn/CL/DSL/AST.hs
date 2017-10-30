@@ -1,6 +1,4 @@
-{-# LANGUAGE GADTs #-}
-
-module AI.Funn.CL.AST where
+module AI.Funn.CL.DSL.AST where
 
 import Data.List.Split
 import Data.List

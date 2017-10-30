@@ -5,6 +5,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 module AI.Funn.CL.Blob (
@@ -23,30 +24,34 @@ module AI.Funn.CL.Blob (
   ) where
 
 import           Control.Applicative
+import           Control.Exception
 import           Control.Monad
-import           Data.Foldable hiding (toList)
+import           Control.Monad.IO.Class
 import qualified Data.Foldable as F
+import           Data.Foldable hiding (toList)
+import           Data.IORef
 import           Data.List
+import           Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import           Data.Monoid
+import           Data.Proxy
 import           Data.Traversable
 import qualified Data.Vector.Generic as V
 import qualified Data.Vector.Storable as S
 import           Foreign.Storable
-
-import           Control.Exception
-import           Control.Monad.IO.Class
-import           Data.Proxy
 import           GHC.Float
 import           GHC.TypeLits
+import           System.IO.Unsafe
 
 import           AI.Funn.CL.Buffer (Buffer)
 import qualified AI.Funn.CL.Buffer as Buffer
+import           AI.Funn.CL.DSL.Code as C
+import           AI.Funn.CL.Function
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.Diff.Diff (Derivable(..))
-import           AI.Funn.Space
 import           AI.Funn.SGD
-import           AI.Funn.CL.Code as C
-import           AI.Funn.CL.Function
+import           AI.Funn.Space
+import qualified Foreign.OpenCL.Bindings as CL
 
 data Mutable = I | M deriving (Show, Eq)
 
@@ -62,29 +67,29 @@ instance Derivable (Blob a n) where
 instance (MonadIO m, KnownNat n, Floats a) => Zero m (Blob a n) where
   zero = pureBlob 0
 
-instance (MonadIO m, KnownNat n, Floats a, CLNum a) => Semi m (Blob a n) where
+instance (MonadIO m, KnownNat n, CLFloats a) => Semi m (Blob a n) where
   plus = addBlob
 
-instance (MonadIO m, KnownNat n, Floats a, CLNum a) => Additive m (Blob a n) where
+instance (MonadIO m, KnownNat n, CLFloats a) => Additive m (Blob a n) where
   plusm = addBlobs . F.toList
 
-instance (MonadIO m, KnownNat n, Floats a, CLNum a) => Scale m Double (Blob a n) where
+instance (MonadIO m, KnownNat n, CLFloats a) => Scale m Double (Blob a n) where
   scale = scaleBlob
 
-instance (MonadIO m, KnownNat n, Floats a, CLNum a) => VectorSpace m Double (Blob a n) where
+instance (MonadIO m, KnownNat n, CLFloats a) => VectorSpace m Double (Blob a n) where
   {}
 
-instance (MonadIO m, KnownNat n, Floats a, CLNum a) => Inner m Double (Blob a n) where
+instance (MonadIO m, KnownNat n, CLFloats a) => Inner m Double (Blob a n) where
   inner x y = do dot <- mulBlob x y
                  sum <$> toList dot
 
-instance (MonadIO m, KnownNat n, Floats a, CLNum a) => Finite m Double (Blob a n) where
+instance (MonadIO m, KnownNat n, CLFloats a) => Finite m Double (Blob a n) where
   getBasis b = toList b
 
-instance (KnownNat n, Storable a, CLNum a) => CLType (Blob a n) (ArrayR a) where
+instance (KnownNat n, Storable a, Argument (Array R a)) => CLType (Blob a n) (ArrayR a) where
   karg = blobArg
 
-instance (KnownNat n, Storable a, CLNum a) => CLType (MBlob a n) (ArrayW a) where
+instance (KnownNat n, Storable a, Argument (Array W a)) => CLType (MBlob a n) (ArrayW a) where
   karg = blobArg
 
 -- Main operations --
@@ -122,6 +127,11 @@ thaw (Blob mem) = Blob <$> Buffer.clone mem
 unsafeThaw :: (MonadIO m, Storable a) => Blob a n -> m (MBlob a n)
 unsafeThaw (Blob mem) = pure (Blob mem)
 
+createCopy :: forall n a m. (MonadIO m, Storable a, KnownNat n) => Blob a n -> m (MBlob a n)
+createCopy src = do dst <- createBlob
+                    copy src dst
+                    return dst
+
 copy :: forall n a m. (MonadIO m, Storable a, KnownNat n) => Blob a n -> MBlob a n -> m ()
 copy (Blob src) (Blob dst) = Buffer.copy src dst 0 0 len
   where
@@ -135,7 +145,21 @@ pureBlob x = Blob <$> Buffer.fromVector (S.replicate n (fromDouble x))
   where
     n = fromIntegral $ natVal (Proxy :: Proxy n)
 
-scaleBlob :: forall n a m. (MonadIO m, KnownNat n, Floats a, CLNum a) => Double -> Blob a n -> m (Blob a n)
+data KName = Scale Precision
+           | AddInto Precision
+           | Add Precision
+           | Sub Precision
+           | Mul Precision
+           | Div Precision
+           | Square Precision
+           | Sqrt Precision
+  deriving (Show, Eq, Ord)
+
+{-# NOINLINE memoTable #-}
+memoTable :: KTable KName
+memoTable = newKTable unsafePerformIO
+
+scaleBlob :: forall n a m. (MonadIO m, KnownNat n, CLFloats a) => Double -> Blob a n -> m (Blob a n)
 scaleBlob a xs = do ys <- createBlob
                     liftIO (scale [n] a xs ys)
                     unsafeFreeze ys
@@ -143,44 +167,43 @@ scaleBlob a xs = do ys <- createBlob
     n = fromIntegral $ natVal (Proxy :: Proxy n)
 
     scale :: [Int] -> Double -> Blob a n -> MBlob a n -> IO ()
-    scale = clfun $ \a xs ys -> do
+    scale = memoc memoTable (Scale (precision @a)) $ \a xs ys -> do
       i <- get_global_id 0
       at ys i .= castDouble a * at xs i
 
     castDouble :: Expr Double -> Expr a
     castDouble (Expr e) = Expr e
 
-addBlob :: forall n m a. (MonadIO m, KnownNat n, CLNum a) => Blob a n -> Blob a n -> m (Blob a n)
-addBlob = zipWithBlob' (+)
+addBlob :: forall n m a. (MonadIO m, KnownNat n, CLFloats a) => Blob a n -> Blob a n -> m (Blob a n)
+addBlob = zipWithBlob' memoTable (Add (precision @a)) (+)
 
-addBlobs :: forall n m a. (MonadIO m, KnownNat n, Floats a, CLNum a) => [Blob a n] -> m (Blob a n)
+addBlobs :: forall n m a. (MonadIO m, KnownNat n, CLFloats a) => [Blob a n] -> m (Blob a n)
 addBlobs [] = zero
-addBlobs (Blob one:xss) = do zs <- Blob <$> Buffer.clone one
-                             for_ xss $ \xs -> do
-                               runKernel addSource "run" [blobArg xs, blobArg zs] [] [n] [1]
-                             return zs
+addBlobs (h:xss) = do zs <- createCopy h
+                      for_ xss $ \xs -> do
+                        liftIO (add [n] xs zs)
+                      unsafeFreeze zs
   where
     n = fromIntegral $ natVal (Proxy :: Proxy n)
-    add :: C.ArrayR a -> C.ArrayW a -> C.CL ()
-    add xs zs = do
+    add :: [Int] -> Blob a n -> MBlob a n -> IO ()
+    add = memoc memoTable (AddInto (precision @a)) $ \xs zs -> do
       i <- C.get_global_id 0
-      C.at zs i .= C.at zs i + C.at xs i
-    addSource = C.kernel add
+      at zs i .= at zs i + at xs i
 
-subBlob :: forall n m a. (MonadIO m, KnownNat n, CLNum a) => Blob a n -> Blob a n -> m (Blob a n)
-subBlob = zipWithBlob' (-)
+subBlob :: forall n m a. (MonadIO m, KnownNat n, CLFloats a) => Blob a n -> Blob a n -> m (Blob a n)
+subBlob = zipWithBlob' memoTable (Sub (precision @a)) (-)
 
-mulBlob :: forall n m a. (MonadIO m, KnownNat n, CLNum a) => Blob a n -> Blob a n -> m (Blob a n)
-mulBlob = zipWithBlob' (*)
+mulBlob :: forall n m a. (MonadIO m, KnownNat n, CLFloats a) => Blob a n -> Blob a n -> m (Blob a n)
+mulBlob = zipWithBlob' memoTable (Mul (precision @a)) (*)
 
-divideBlob :: forall n m a. (MonadIO m, KnownNat n, CLFractional a) => Blob a n -> Blob a n -> m (Blob a n)
-divideBlob = zipWithBlob' (/)
+divideBlob :: forall n m a. (MonadIO m, KnownNat n, CLFloats a) => Blob a n -> Blob a n -> m (Blob a n)
+divideBlob = zipWithBlob' memoTable (Div (precision @a)) (/)
 
-squareBlob :: forall n m a. (MonadIO m, KnownNat n, CLNum a) => Blob a n -> m (Blob a n)
-squareBlob = mapBlob' (^2)
+squareBlob :: forall n m a. (MonadIO m, KnownNat n, CLFloats a) => Blob a n -> m (Blob a n)
+squareBlob = mapBlob' memoTable (Square (precision @a)) (^2)
 
-sqrtBlob :: forall n m a. (MonadIO m, KnownNat n, CLFloating a) => Blob a n -> m (Blob a n)
-sqrtBlob = mapBlob' sqrt
+sqrtBlob :: forall n m a. (MonadIO m, KnownNat n, CLFloats a) => Blob a n -> m (Blob a n)
+sqrtBlob = mapBlob' memoTable (Sqrt (precision @a)) sqrt
 
 catBlob :: forall α β m a q. (MonadIO m, KnownNat α, KnownNat β, Storable a) => BlobT q a α -> BlobT q a β -> m (BlobT q a (α + β))
 catBlob (Blob xs) (Blob ys) = Blob <$> Buffer.concat [xs, ys]
@@ -193,20 +216,20 @@ splitBlob (Blob xs) = (Blob ys, Blob zs)
     ys = Buffer.slice 0 m xs
     zs = Buffer.slice m n xs
 
-mapBlob :: forall n m a. (MonadIO m, KnownNat n, Storable a,
-                            Argument (Array W a), Argument (Array R a))
-        => (Expr a -> CL (Expr a))
+mapBlob :: forall n m a k. (MonadIO m, KnownNat n, Storable a,
+                            Argument (Array W a), Argument (Array R a), Ord k)
+        => KTable k -> k
+        -> (Expr a -> CL (Expr a))
         -> Blob a n -> m (Blob a n)
-mapBlob f = go
+mapBlob table k f = go
   where
     go xs = do
       ys <- createBlob
-      (runKernel fKernel "run"
-       [blobArg xs, blobArg ys]
-       [] [fromIntegral n] [])
+      liftIO (fKernel [fromIntegral n] xs ys)
       unsafeFreeze ys
 
-    fKernel = C.kernel fSrc
+    fKernel :: [Int] -> Blob a n -> MBlob a n -> IO ()
+    fKernel = memoc table k fSrc
     fSrc :: ArrayR a -> ArrayW a -> CL ()
     fSrc xs ys = do i <- get_global_id 0
                     y <- f (at xs i)
@@ -215,20 +238,20 @@ mapBlob f = go
     n :: Int
     n = fromIntegral $ natVal (Proxy :: Proxy n)
 
-zipWithBlob :: forall n m a. (MonadIO m, KnownNat n, Storable a,
-                                Argument (Array W a), Argument (Array R a))
-            => (Expr a -> Expr a -> CL (Expr a))
+zipWithBlob :: forall n m a k. (MonadIO m, KnownNat n, Storable a,
+                                Argument (Array W a), Argument (Array R a), Ord k)
+            => KTable k -> k
+            -> (Expr a -> Expr a -> CL (Expr a))
             -> Blob a n -> Blob a n -> m (Blob a n)
-zipWithBlob f = go
+zipWithBlob table k f = go
   where
     go xs ys = do
       zs <- createBlob
-      (runKernel fKernel "run"
-       [blobArg xs, blobArg ys, blobArg zs]
-       [] [fromIntegral n] [])
+      liftIO (fKernel [fromIntegral n] xs ys zs)
       unsafeFreeze zs
 
-    fKernel = C.kernel fSrc
+    fKernel :: [Int] -> Blob a n -> Blob a n -> MBlob a n -> IO ()
+    fKernel = memoc table k fSrc
     fSrc :: ArrayR a -> ArrayR a -> ArrayW a -> CL ()
     fSrc xs ys zs = do i <- get_global_id 0
                        z <- f (at xs i) (at ys i)
@@ -238,13 +261,17 @@ zipWithBlob f = go
     n = fromIntegral $ natVal (Proxy :: Proxy n)
 
 
-mapBlob' :: forall n m a. (MonadIO m, KnownNat n, Storable a, Argument (Array W a), Argument (Array R a)) => (Expr a -> Expr a) -> Blob a n -> m (Blob a n)
-mapBlob' f = mapBlob (pure . f)
+mapBlob' :: forall n m a k. (MonadIO m, KnownNat n, Storable a, Argument (Array W a), Argument (Array R a), Ord k)
+         => KTable k -> k
+         -> (Expr a -> Expr a)
+         -> Blob a n -> m (Blob a n)
+mapBlob' table k f = mapBlob table k (pure . f)
 
-zipWithBlob' :: forall n m a. (MonadIO m, KnownNat n, Storable a, Argument (Array W a), Argument (Array R a))
-            => (Expr a -> Expr a -> Expr a)
-            -> Blob a n -> Blob a n -> m (Blob a n)
-zipWithBlob' f = zipWithBlob (\x y -> pure (f x y))
+zipWithBlob' :: forall n m a k. (MonadIO m, KnownNat n, Storable a, Argument (Array W a), Argument (Array R a), Ord k)
+             => KTable k -> k
+             -> (Expr a -> Expr a -> Expr a)
+             -> Blob a n -> Blob a n -> m (Blob a n)
+zipWithBlob' table k f = zipWithBlob table k (\x y -> pure (f x y))
 
 
 adamBlob :: forall (n :: Nat) m a. (MonadIO m, KnownNat n, CLFloating a, Floats a) => AdamConfig m (Blob a n) (Blob a n)

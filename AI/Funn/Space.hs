@@ -3,17 +3,23 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 module AI.Funn.Space where
 
 import Control.Applicative
 import Data.Foldable
 import Data.Functor.Identity
-import GHC.Float
+import Data.Proxy
 import Foreign.Storable
+import GHC.Float
+
+data Precision = FP32 | FP64
+  deriving (Show, Eq, Ord)
 
 class Storable a => Floats a where
   toDouble :: a -> Double
   fromDouble :: Double -> a
+  precision :: Precision
 
 convertFloat :: (Floats a, Floats b) => a -> b
 convertFloat = fromDouble . toDouble
@@ -21,10 +27,12 @@ convertFloat = fromDouble . toDouble
 instance Floats Double where
   toDouble = id
   fromDouble = id
+  precision = FP64
 
 instance Floats Float where
   toDouble = float2Double
   fromDouble = double2Float
+  precision = FP32
 
 class Zero m a where
   zero :: m a
