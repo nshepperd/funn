@@ -1,18 +1,16 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeInType #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
-{-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
 module AI.Funn.TypeLits (withNat, CLog, Max) where
 
+import Data.Singletons
 import Data.Constraint
 import Data.Ord
 import Data.Proxy
@@ -40,14 +38,19 @@ type family Max (a :: Nat) (b :: Nat) :: Nat where
   Max a b = RunOrdering (CmpNat a b)
             b a a
 
-(genDefunSymbols [''Max])
+-- MaxSym1 :: Nat -> (Nat ~> Nat)
+data MaxSym1 (a :: Nat) (f :: TyFun Nat Nat)
+type instance Apply (MaxSym1 a) b = Max a b
+-- MaxSym0 :: Nat ~> (Nat ~> Nat)
+data MaxSym0 (f :: TyFun Nat (Nat ~> Nat))
+type instance Apply MaxSym0 a = MaxSym1 a
 
-instance (KnownNat a, KnownNat b) => KnownNat2 $(nameToSymbol ''Max) a b where
-  type KnownNatF2 $(nameToSymbol ''Max) = MaxSym0
+instance (KnownNat a, KnownNat b) => KnownNat2 "AI.Funn.TypeLits.Max" a b where
+  type KnownNatF2 "AI.Funn.TypeLits.Max" = MaxSym0
   natSing2 = let x = natVal (Proxy :: Proxy a)
                  y = natVal (Proxy :: Proxy b)
                  z = max x y
-             in SNatKn z
+             in SNatKn (fromIntegral z)
 
 -- CLog x: exact integer equivalent of ceiling (logBase 2 x)
 -- instance (KnownNat a) => KnownNat (CLog a)
@@ -89,7 +92,9 @@ type CLog30 n = RunOrdering (CmpNat (2^30) n) 31 30 (CLog29 n)
 type CLog31 n = RunOrdering (CmpNat (2^31) n) 32 31 (CLog30 n)
 type CLog32 n = RunOrdering (CmpNat (2^32) n) 33 32 (CLog31 n)
 
-$(genDefunSymbols [''CLog])
+-- CLogSym0 :: (Nat ~> Nat)
+data CLogSym0 (f :: TyFun Nat Nat)
+type instance Apply CLogSym0 a = CLog a
 
 cLog :: Integer -> Integer
 cLog n = go 32
@@ -100,20 +105,20 @@ cLog n = go 32
              EQ -> s
              GT -> go (s - 1)
 
-instance (KnownNat a) => KnownNat1 $(nameToSymbol ''CLog) a where
-  type KnownNatF1 $(nameToSymbol ''CLog) = CLogSym0
+instance (KnownNat a) => KnownNat1 "AI.Funn.TypeLits.CLog" a where
+  type KnownNatF1 "AI.Funn.TypeLits.CLog" = CLogSym0
   natSing1 = let x = natVal (Proxy :: Proxy a)
-             in SNatKn (cLog x)
+             in SNatKn (fromIntegral $ cLog x)
 
-cLogTest :: Integer -> Integer
-cLogTest n = withNat n $ \(Proxy :: Proxy n) ->
-                           natVal (Proxy :: Proxy (CLog n))
+-- cLogTest :: Integer -> Integer
+-- cLogTest n = withNat n $ \(Proxy :: Proxy n) ->
+--                            natVal (Proxy :: Proxy (CLog n))
 
-prop_cLogTypeLevel :: Property
-prop_cLogTypeLevel = property $ \n -> n >= 0 ==> cLog n == cLogTest n
+-- prop_cLogTypeLevel :: Property
+-- prop_cLogTypeLevel = property $ \n -> n >= 0 ==> cLog n == cLogTest n
 
-prop_cLogDefinition :: Property
-prop_cLogDefinition = property $ \n -> n >= 0 ==> 2^(cLog n) >= n
+-- prop_cLogDefinition :: Property
+-- prop_cLogDefinition = property $ \n -> n >= 0 ==> 2^(cLog n) >= n
 
-prop_cLogDefinition' :: Property
-prop_cLogDefinition' = property $ \n -> n >= 2 ==> 2^(cLog n - 1) < n
+-- prop_cLogDefinition' :: Property
+-- prop_cLogDefinition' = property $ \n -> n >= 2 ==> 2^(cLog n - 1) < n
