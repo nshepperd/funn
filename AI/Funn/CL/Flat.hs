@@ -110,9 +110,8 @@ quadraticCost = Diff run
 softmaxCost :: (MonadIO m, KnownNat n, CLFloats a, Floats a) => Diff m (Blob a n, Int) Double
 softmaxCost = Diff run
   where run (bo, target) = do
-          oslist <- Blob.toList bo
-          let os = V.fromList oslist :: S.Vector Double
-              xt = os V.! target
+          os <- Blob.toVector bo
+          let xt = os V.! target
               exp_total_minus_xt = V.imap (\j x -> if j /= target then exp (x - xt) else 0) os
               log_total_minus_xt = log1p (V.sum exp_total_minus_xt)
               cost = log_total_minus_xt
@@ -126,7 +125,7 @@ softmaxCost = Diff run
                                               -total_but_target / total
                                              else
                                                exp x / total)) os
-          backblob <- Blob.fromList (V.toList back)
+          backblob <- Blob.fromVector back
           return (backblob, ())
 
 fcDiff :: forall α β a m. (MonadIO m, KnownNat α, KnownNat β, CLFloats a) =>

@@ -14,6 +14,7 @@ module AI.Funn.CL.Blob (
   freeze, unsafeFreeze,
   thaw, unsafeThaw,
   fromList, toList,
+  fromVector, toVector,
   blobArg,
   pureBlob, scaleBlob, addBlob, subBlob,
   squareBlob, sqrtBlob, divideBlob,
@@ -111,6 +112,16 @@ fromList xs = do when (n /= genericLength xs) $ liftIO $ do
 
 toList :: (MonadIO m, Floats a) => BlobT q a n -> m [Double]
 toList (Blob mem) = map toDouble <$> Buffer.toList mem
+
+fromVector :: forall n a m q. (MonadIO m, KnownNat n, Floats a) => (S.Vector Double) -> m (BlobT q a n)
+fromVector xs = do when (fromIntegral n /= V.length xs) $ liftIO $ do
+                     throwIO (IndexOutOfBounds "Blob.fromVector")
+                   Blob <$> Buffer.fromVector (V.map fromDouble xs)
+  where
+    n = natVal (Proxy :: Proxy n)
+
+toVector :: (MonadIO m, Floats a) => BlobT q a n -> m (S.Vector Double)
+toVector (Blob mem) = V.map toDouble <$> Buffer.toVector mem
 
 blobArg :: BlobT q a n -> KernelArg
 blobArg (Blob mem) = Buffer.arg mem

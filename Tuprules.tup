@@ -1,5 +1,6 @@
 HSROOT=$(TUP_CWD)
 
+# GHC_FLAGS=-O2 -ddump-stg -ticky
 GHC_FLAGS=-O2
 GHC_CFLAGS=-Wno-partial-type-signatures
 
