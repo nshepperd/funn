@@ -13,7 +13,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-module AI.Funn.CL.Function (clfun, CLType(..), KernelProgram(..), compile, KTable, newKTable, memoc, memo) where
+module AI.Funn.CL.Function (clfun, CLType(..), KernelProgram, compile, KTable, newKTable, memoc, memo) where
 
 import           Control.Monad
 import           Control.Monad.Free
@@ -83,30 +83,18 @@ instance CLType Double (Expr Double) where
 instance CLType Int (Expr Int) where
   karg x = KernelArg (\f -> f [CL.VArg (fromIntegral x :: Int32)])
 
-data KFun f where
-  Arg :: (a -> KFun as) -> KFun (a -> as)
-  Done :: KernelArg -> (KernelArg -> [Int] -> IO ()) -> KFun (IO ())
-
-consArg :: KernelArg -> KFun xs -> KFun xs
-consArg arg (Done as run) = Done (arg <> as) run
-consArg arg (Arg f) = Arg (consArg arg . f)
-
--- UNSAFE
+-- Unsafe. Exists only so RunKernel can be recursive.
 sub :: KernelProgram (x:xs) -> KernelProgram xs
 sub (KernelProgram k) = KernelProgram k
 
 class RunKernel xs f | f -> xs where
-  func :: KernelProgram xs -> KFun f
+  func :: KernelProgram xs -> ([Int] -> (KernelArg -> KernelArg) -> f)
 
 instance RunKernel '[] (IO ()) where
-  func (KernelProgram k) = Done mempty (\args ranges -> runCompiled k [args] [] (map fromIntegral ranges) [])
+  func (KernelProgram k) ranges prependArgs = runCompiled k [prependArgs mempty] [] (map fromIntegral ranges) []
 
 instance (RunKernel xs f, CLType a x) => RunKernel (x:xs) (a -> f) where
-  func kp = Arg (\a -> consArg (karg a) (func (sub kp)))
-
-runfun :: KFun f -> [Int] -> f
-runfun (Done args run) range = run args range
-runfun (Arg k) range = \a -> runfun (k a) range
+  func kp ranges prependArgs = \a -> func (sub kp) ranges (prependArgs . (karg a<>))
 
 clfun :: RunKernel xs f => KernelProgram xs -> [Int] -> f
-clfun g = runfun (func g)
+clfun g ranges = func g ranges id
