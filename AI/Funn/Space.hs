@@ -12,6 +12,7 @@ import Data.Functor.Identity
 import Data.Proxy
 import Foreign.Storable
 import GHC.Float
+import GHC.Stack
 
 data Precision = FP32 | FP64
   deriving (Show, Eq, Ord)
@@ -44,7 +45,7 @@ class Scale m x a | a -> x where
   scale :: x -> a -> m a
 
 class (Zero m a, Semi m a) => Additive m a where
-  plusm :: (Foldable f) => f a -> m a
+  plusm :: (HasCallStack, Foldable f) => f a -> m a
   default plusm :: (Monad m, Foldable f) => f a -> m a
   plusm xs = do z <- zero
                 foldrM plus z xs

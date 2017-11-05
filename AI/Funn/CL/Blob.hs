@@ -10,7 +10,7 @@
 {-# LANGUAGE TypeOperators #-}
 module AI.Funn.CL.Blob (
   BlobT(..), Blob, MBlob,
-  createBlob, freeBlob,
+  createBlob,
   freeze, unsafeFreeze,
   thaw, unsafeThaw,
   fromList, toList,
@@ -41,6 +41,7 @@ import qualified Data.Vector.Generic as V
 import qualified Data.Vector.Storable as S
 import           Foreign.Storable
 import           GHC.Float
+import           GHC.Stack
 import           GHC.TypeLits
 import           System.IO.Unsafe
 
@@ -95,8 +96,8 @@ instance (KnownNat n, Storable a, Argument (Array W a)) => CLType (MBlob a n) (A
 
 -- Main operations --
 
-freeBlob :: MonadIO m => BlobT q a n -> m ()
-freeBlob (Blob mem) = Buffer.free mem
+-- freeBlob :: MonadIO m => BlobT q a n -> m ()
+-- freeBlob (Blob mem) = Buffer.free mem
 
 createBlob :: forall n m a. (MonadIO m, KnownNat n, Storable a) => m (MBlob a n)
 createBlob = Blob <$> Buffer.malloc (fromIntegral n)
@@ -123,7 +124,7 @@ fromVector xs = do when (fromIntegral n /= V.length xs) $ liftIO $ do
 toVector :: (MonadIO m, Floats a) => BlobT q a n -> m (S.Vector Double)
 toVector (Blob mem) = V.map toDouble <$> Buffer.toVector mem
 
-blobArg :: BlobT q a n -> KernelArg
+blobArg :: (HasCallStack, Storable a) => BlobT q a n -> KernelArg
 blobArg (Blob mem) = Buffer.arg mem
 
 freeze :: (MonadIO m, Storable a) => MBlob a n -> m (Blob a n)
@@ -188,18 +189,12 @@ scaleBlob a xs = do ys <- createBlob
 addBlob :: forall n m a. (MonadIO m, KnownNat n, CLFloats a) => Blob a n -> Blob a n -> m (Blob a n)
 addBlob = zipWithBlob' memoTable (Add (precision @a)) (+)
 
-addBlobs :: forall n m a. (MonadIO m, KnownNat n, CLFloats a) => [Blob a n] -> m (Blob a n)
+addBlobs :: forall n m a. (HasCallStack, MonadIO m, KnownNat n, CLFloats a) => [Blob a n] -> m (Blob a n)
 addBlobs [] = zero
-addBlobs (h:xss) = do zs <- createCopy h
-                      for_ xss $ \xs -> do
-                        liftIO (add [n] xs zs)
-                      unsafeFreeze zs
-  where
-    n = fromIntegral $ natVal (Proxy :: Proxy n)
-    add :: [Int] -> Blob a n -> MBlob a n -> IO ()
-    add = memoc memoTable (AddInto (precision @a)) $ \xs zs -> do
-      i <- C.get_global_id 0
-      at zs i .= at zs i + at xs i
+addBlobs xss = do Blob zs <- zero :: m (Blob a n)
+                  for_ xss $ \(Blob xs) -> do
+                    Buffer.addInto xs zs
+                  return (Blob zs)
 
 subBlob :: forall n m a. (MonadIO m, KnownNat n, CLFloats a) => Blob a n -> Blob a n -> m (Blob a n)
 subBlob = zipWithBlob' memoTable (Sub (precision @a)) (-)

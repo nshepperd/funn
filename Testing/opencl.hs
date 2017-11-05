@@ -205,7 +205,7 @@ prop_mixdiff :: Property
 prop_mixdiff = checkGradientCL (amixDiff @3 @2 @2 @Double Proxy)
 
 prop_softmaxcost :: Property
-prop_softmaxcost = checkGradientCL (putR 0 >>> softmaxCost @IO @3 @Double)
+prop_softmaxcost = checkGradientCL (putR 0 >>> softmaxCost @3 @IO @Double)
 
 -- Equality
 
@@ -228,7 +228,7 @@ prop_mix_eq :: Property
 prop_mix_eq = checkSameCL (amixDiff @3 @2 @2 @Double Proxy) (C.amixDiff @3 @2 @2 Proxy)
 
 prop_softmaxcost_eq :: Property
-prop_softmaxcost_eq = checkSameCL (putR 0 >>> softmaxCost @IO @3 @Double) (putR 0 >>> C.softmaxCost)
+prop_softmaxcost_eq = checkSameCL (putR 0 >>> softmaxCost @3 @IO @Double) (putR 0 >>> C.softmaxCost)
 
 
 -- Make TemplateHaskell aware of above definitions.

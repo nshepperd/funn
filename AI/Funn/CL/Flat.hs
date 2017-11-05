@@ -44,6 +44,8 @@ data KName = ReluF Precision
            | FCBackWS Precision
            | FCBackXS Precision
            | FCBackBS Precision
+           | SoftmaxF Precision
+           | SoftmaxB Precision
   deriving (Show, Eq, Ord)
 
 {-# NOINLINE memoTable #-}
@@ -107,26 +109,43 @@ quadraticCost = Diff run
       dy <- scaleBlob (-2 * δ) ds
       return (dx, dy)
 
-softmaxCost :: (MonadIO m, KnownNat n, CLFloats a, Floats a) => Diff m (Blob a n, Int) Double
+softmaxCost :: forall n m a. (MonadIO m, KnownNat n, CLFloats a) => Diff m (Blob a n, Int) Double
 softmaxCost = Diff run
   where run (bo, target) = do
-          os <- Blob.toVector bo
-          let xt = os V.! target
-              exp_total_minus_xt = V.imap (\j x -> if j /= target then exp (x - xt) else 0) os
-              log_total_minus_xt = log1p (V.sum exp_total_minus_xt)
-              cost = log_total_minus_xt
-          return (cost, backward target os)
+          o <- Blob.createBlob @ 2
+          liftIO (forwardKernel n target bo o)
+          [s, cost] <- Blob.toList o
+          return (cost, backward target s bo)
 
-        backward target os dcost = do
-          let
-            total_but_target = V.sum (V.imap (\i x -> if i /= target then exp x else 0) os)
-            total = V.sum (V.map exp os)
-            back = V.imap (\j x -> dcost * (if target == j then
-                                              -total_but_target / total
-                                             else
-                                               exp x / total)) os
-          backblob <- Blob.fromVector back
-          return (backblob, ())
+        backward target s bo dcost = do
+          dbo <- Blob.createBlob
+          liftIO (backwardKernel target s bo dbo)
+          db' <- Blob.unsafeFreeze dbo
+          return (db', ())
+
+        forwardKernel :: Int -> Int -> Blob a n -> MBlob a 2 -> IO ()
+        forwardKernel = memoc memoTable (SoftmaxF (precision @a)) forwardSrc [1]
+        forwardSrc :: Expr Int -> Expr Int -> ArrayR a -> ArrayW a -> CL ()
+        forwardSrc n t os out = do
+          total <- initvar 0
+          forEach 0 n $ \i -> do
+            total .= total + exp (at os i)
+          at out 0 .= total
+          at out 1 .= log total - at os t
+
+        delta i j = cond (feq i j) 1 0
+
+        backwardKernel :: Int -> Double -> Blob a n -> MBlob a n -> IO ()
+        backwardKernel = memoc memoTable (SoftmaxB (precision @a)) backwardSrc [n]
+        backwardSrc :: Expr Int -> Expr Double -> ArrayR a -> ArrayW a -> CL ()
+        backwardSrc t s os out = do
+          i <- get_global_id 0
+          at out i .= exp (at os i) / castFloat s - delta i t
+
+        castFloat :: forall a b. (CLFloats a, CLFloats b) => Expr a -> Expr b
+        castFloat (Expr a) = (Expr a)
+
+        n = fromIntegral $ natVal (Proxy @ n)
 
 fcDiff :: forall α β a m. (MonadIO m, KnownNat α, KnownNat β, CLFloats a) =>
           Diff m (Blob a (α * β + β), Blob a α) (Blob a β)

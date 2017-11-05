@@ -149,7 +149,7 @@ v .= e = liftF (Assign v e ())
 
 -- Embedding literals
 
-operator :: String -> Expr a -> Expr a -> Expr a
+operator :: String -> Expr a -> Expr b -> Expr c
 operator op (Expr a) (Expr b) = Expr (AST.ExprOp a op b)
 
 class Literal a where
@@ -271,6 +271,9 @@ instance Floating (Expr Double) where
 
 -- Builtin functions
 
+cond :: Expr Bool -> Expr a -> Expr a -> Expr a
+cond (Expr e) (Expr a) (Expr b) = Expr (AST.ExprCond e a b)
+
 class DefineFunction r where
   function_ :: AST.Name -> [AST.Expr] -> r
 
@@ -300,6 +303,12 @@ instance Relational Double where
   fmin = function "min"
   fmax = function "max"
   fstep = function "step"
+
+class Compare a where
+  feq :: Expr a -> Expr a -> Expr Bool
+  feq = operator "=="
+
+instance Compare Int
 
 data Mode = R | W
 newtype Array (m :: Mode) a = Array AST.Name

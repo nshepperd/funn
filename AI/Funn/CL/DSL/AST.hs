@@ -11,6 +11,7 @@ data Expr = ExprLit String
           | ExprIndex Name Expr
           | ExprCall Name [Expr]
           | ExprOp Expr Name Expr
+          | ExprCond Expr Expr Expr
   deriving (Show)
 
 data Decl = Decl TypeDecl Name
@@ -42,6 +43,7 @@ printExpr (ExprVar v) = v
 printExpr (ExprIndex v i) = v ++ "[" ++ printExpr i ++ "]"
 printExpr (ExprCall f args) = f ++ "(" ++ intercalate ", " (map printExpr args) ++ ")"
 printExpr (ExprOp a x b) = "(" ++ printExpr a ++ " " ++ x ++ " " ++ printExpr b ++ ")"
+printExpr (ExprCond e a b) = "(" ++ printExpr e ++ " ? " ++ printExpr a ++ " : " ++ printExpr b ++ ")"
 
 printDecl :: Decl -> String
 printDecl (Decl t n) = t ++ " " ++ n

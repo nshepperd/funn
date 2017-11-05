@@ -13,7 +13,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-module AI.Funn.CL.Function (clfun, CLType(..), KernelProgram, compile, KTable, newKTable, memoc, memo) where
+module AI.Funn.CL.Function (clfun, CLType(..), KernelProgram(..), compile, KTable, newKTable, memoc, memo) where
 
 import           Control.Monad
 import           Control.Monad.Free
@@ -30,6 +30,7 @@ import           Data.Ratio
 import           Data.Traversable
 import           Foreign.Ptr
 import           Foreign.Storable
+import           GHC.Stack
 import           System.IO.Unsafe
 
 import           AI.Funn.CL.DSL.Code
@@ -58,7 +59,7 @@ newtype KTable k = KTable (IORef (Map k CL.Kernel))
 newKTable :: Ord k => (IO (KTable k) -> KTable k) -> KTable k
 newKTable f = f (KTable <$> newIORef Map.empty)
 
-memoc :: (ToKernel f xs, RunKernel xs g, Ord k)
+memoc :: (HasCallStack, ToKernel f xs, RunKernel xs g, Ord k)
       => KTable k -> k -> f -> [Int] -> g
 memoc table key f = clfun (memo table key (compile f))
 
@@ -74,7 +75,7 @@ memo (KTable memoTable) key (KernelProgram prog) = unsafePerformIO $ do
 
 
 class Argument x => CLType a x | a -> x where
-  karg :: a -> KernelArg
+  karg :: HasCallStack => a -> KernelArg
 
 instance CLType Float (Expr Float) where
   karg x = KernelArg (\f -> f [CL.VArg x])
@@ -88,13 +89,16 @@ sub :: KernelProgram (x:xs) -> KernelProgram xs
 sub (KernelProgram k) = KernelProgram k
 
 class RunKernel xs f | f -> xs where
-  func :: KernelProgram xs -> ([Int] -> (KernelArg -> KernelArg) -> f)
+  func :: HasCallStack => KernelProgram xs -> ([Int] -> (KernelArg -> KernelArg) -> f)
 
 instance RunKernel '[] (IO ()) where
+  {-# INLINE func #-}
   func (KernelProgram k) ranges prependArgs = runCompiled k [prependArgs mempty] [] (map fromIntegral ranges) []
 
 instance (RunKernel xs f, CLType a x) => RunKernel (x:xs) (a -> f) where
+  {-# INLINE func #-}
   func kp ranges prependArgs = \a -> func (sub kp) ranges (prependArgs . (karg a<>))
 
-clfun :: RunKernel xs f => KernelProgram xs -> [Int] -> f
+{-# INLINE clfun #-}
+clfun :: (HasCallStack, RunKernel xs f) => KernelProgram xs -> [Int] -> f
 clfun g ranges = func g ranges id

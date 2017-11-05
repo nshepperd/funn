@@ -217,12 +217,11 @@ train modelSize initialParameters input savefile logfile chunkSize learningRate 
               modifyIORef' running_average (\x -> (α*x + (1 - α)*err))
               modifyIORef' running_count (\x -> (α*x + (1 - α)*1))
 
-            putStrLn $ "Error: " ++ show err
+            -- putStrLn $ "Error: " ++ show err
             (dp, _) <- k 1
             return dp
 
           next p m = do
-            liftIO $ putStrLn "next"
             x <- do q <- readIORef running_average
                     w <- readIORef running_count
                     return ((q / w) / fromIntegral chunkSize)
