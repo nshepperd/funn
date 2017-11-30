@@ -10,3 +10,4 @@ HCC=$(TUP_CWD)/hcc -i$(HSROOT)
 SANDBOX_GHC=$(TUP_CWD)/ghc $(HSROOT)
 !ghc = |> ^o LINK %o^ LANG=en_AU.UTF-8 $(SANDBOX_GHC) $(GHC_LDFLAGS) $(GHC_FLAGS) -o %o %f |>
 !ghcc = |> ^o GHC %B.o^ LANG=en_AU.UTF-8 $(SANDBOX_GHC) $(GHC_CFLAGS) $(GHC_FLAGS) -c %f |> %B.hi %B.o
+!ghcc_p = |> ^o GHC(PROF) %B.o^ LANG=en_AU.UTF-8 $(SANDBOX_GHC) -prof -hisuf p_hi -osuf p_o $(GHC_CFLAGS) $(GHC_FLAGS) -c %f |> %B.p_hi %B.p_o

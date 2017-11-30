@@ -72,7 +72,14 @@ if __name__ == '__main__':
 
     for src in order:
         if deps[src]:
-            print ': {src} | {deps} |> !ghcc {search} |>'.format(src=src, deps=' '.join(d + '.hi' for d in deps[src]),
-                                                                 search=' '.join('-i{}'.format(escape(s)) for s in search))
+            all_deps = ' '.join([d + '.hi' for d in deps[src]] +
+                                [d + '.p_hi' for d in deps[src]])
+            searchdirs = ' '.join('-i{}'.format(escape(s)) for s in search)
+
+            print ': {src} | {deps} |> !ghcc {search} |>'.format(src=src, deps=all_deps,
+                                                                 search=searchdirs)
+            print ': {src} | {deps} |> !ghcc_p {search} |>'.format(src=src, deps=all_deps,
+                                                                   search=searchdirs)
         else:
             print ': {src} |> !ghcc |>'.format(src=src)
+            print ': {src} |> !ghcc_p |>'.format(src=src)
