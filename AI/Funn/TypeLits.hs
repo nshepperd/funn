@@ -10,11 +10,9 @@
 {-# LANGUAGE UndecidableInstances #-}
 module AI.Funn.TypeLits (withNat, CLog, Max) where
 
-import Data.Singletons
 import Data.Constraint
 import Data.Ord
 import Data.Proxy
-import Data.Singletons.TH (genDefunSymbols)
 import GHC.TypeLits
 import GHC.TypeLits.KnownNat
 import Test.QuickCheck
@@ -38,15 +36,7 @@ type family Max (a :: Nat) (b :: Nat) :: Nat where
   Max a b = RunOrdering (CmpNat a b)
             b a a
 
--- MaxSym1 :: Nat -> (Nat ~> Nat)
-data MaxSym1 (a :: Nat) (f :: TyFun Nat Nat)
-type instance Apply (MaxSym1 a) b = Max a b
--- MaxSym0 :: Nat ~> (Nat ~> Nat)
-data MaxSym0 (f :: TyFun Nat (Nat ~> Nat))
-type instance Apply MaxSym0 a = MaxSym1 a
-
 instance (KnownNat a, KnownNat b) => KnownNat2 "AI.Funn.TypeLits.Max" a b where
-  type KnownNatF2 "AI.Funn.TypeLits.Max" = MaxSym0
   natSing2 = let x = natVal (Proxy :: Proxy a)
                  y = natVal (Proxy :: Proxy b)
                  z = max x y
@@ -92,10 +82,6 @@ type CLog30 n = RunOrdering (CmpNat (2^30) n) 31 30 (CLog29 n)
 type CLog31 n = RunOrdering (CmpNat (2^31) n) 32 31 (CLog30 n)
 type CLog32 n = RunOrdering (CmpNat (2^32) n) 33 32 (CLog31 n)
 
--- CLogSym0 :: (Nat ~> Nat)
-data CLogSym0 (f :: TyFun Nat Nat)
-type instance Apply CLogSym0 a = CLog a
-
 cLog :: Integer -> Integer
 cLog n = go 32
   where
@@ -106,7 +92,6 @@ cLog n = go 32
              GT -> go (s - 1)
 
 instance (KnownNat a) => KnownNat1 "AI.Funn.TypeLits.CLog" a where
-  type KnownNatF1 "AI.Funn.TypeLits.CLog" = CLogSym0
   natSing1 = let x = natVal (Proxy :: Proxy a)
              in SNatKn (fromIntegral $ cLog x)
 
