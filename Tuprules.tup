@@ -1,7 +1,8 @@
 HSROOT=$(TUP_CWD)
 
 # GHC_FLAGS=-O2 -ddump-stg -ticky
-GHC_FLAGS=-O -fprof-auto
+#  -fprof-auto
+GHC_FLAGS=-O2
 GHC_CFLAGS=-Wno-partial-type-signatures
 
 GHC_LDFLAGS=-package vector -package random-fu -package reinterpret-cast -package hmatrix -package optparse-applicative -package criterion -package constraints -package binary-search -package clock -package lens -package ghc-typelits-knownnat -package hopencl -package QuickCheck -rtsopts
