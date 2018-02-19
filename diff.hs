@@ -59,6 +59,9 @@ import           AI.Funn.Flat.LSTM
 import           AI.Funn.Flat.Mixing
 import           AI.Funn.Flat.ParBox
 import           AI.Funn.SGD
+import           AI.Funn.Optimizer.SGD
+import           AI.Funn.Optimizer.Adam
+import           AI.Funn.Optimizer.AMSGrad
 import           AI.Funn.Space
 import           AI.Funn.TypeLits
 
@@ -261,7 +264,25 @@ main = do
 
         deepseqM (tvec, ovec)
 
-        adam (Blob.adamBlob { adam_α = learningRate }) initialParameters objective next
+        -- trainState <- initSGD learningRate 0.9 plus initialParameters
+        -- let go trainState = do
+        --       grad <- objective (extractSGD trainState)
+        --       trainState' <- updateSGD grad trainState
+        --       next (extractSGD trainState') (go trainState')
+
+        trainState <- initAdam (Blob.adamBlob { adam_α = learningRate }) initialParameters
+        let go trainState = do
+              grad <- objective (extractAdam trainState)
+              trainState' <- updateAdam grad trainState
+              next (extractAdam trainState') (go trainState')
+
+        -- trainState <- initAMS (Blob.adamBlob { adam_α = learningRate }) (\a b -> pure $ Blob.zipBlob max a b) initialParameters
+        -- let go trainState = do
+        --       grad <- objective (extractAMS trainState)
+        --       trainState' <- updateAMS grad trainState
+        --       next (extractAMS trainState') (go trainState')
+
+        go trainState
 
 
   case cmd of

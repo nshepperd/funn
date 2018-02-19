@@ -2,7 +2,7 @@
 {-# LANGUAGE KindSignatures, DataKinds, TypeOperators #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module AI.Funn.Flat.Blob (Blob, generate, split, cat,
-                          blob, getBlob, mapBlob,
+                          blob, getBlob, mapBlob, zipBlob,
                           fromList, toList, scale, adamBlob,
                          ) where
 
@@ -116,6 +116,9 @@ sumBlobs xs = Blob $ Buffer.sumBuffers [buf | Blob buf <- xs]
 
 mapBlob :: (Double -> Double) -> Blob n -> Blob n
 mapBlob f b = blob (V.map f (getBlob b))
+
+zipBlob :: (Double -> Double -> Double) -> Blob n -> Blob n -> Blob n
+zipBlob f a b = blob (V.zipWith f (getBlob a) (getBlob b))
 
 adamBlob :: forall m (n :: Nat). (Monad m, KnownNat n) => AdamConfig m (Blob n) (Blob n)
 adamBlob = defaultAdam {
