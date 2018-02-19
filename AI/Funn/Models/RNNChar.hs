@@ -1,24 +1,29 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=20 #-}
-module AI.Funn.Models.RNNChar (Model, ModelPars, buildModel, initialize) where
+module AI.Funn.Models.RNNChar (Model, ModelPars, ParsWrapped, buildModel, initialize, readPars, storePars) where
 
 import           Control.Monad.IO.Class
 import qualified Data.Binary as BL
-import qualified Data.Binary.Put as BL
 import qualified Data.Binary.Get as BL
+import qualified Data.Binary.Put as BL
 import qualified Data.ByteString.Lazy as BL
+import           Data.Constraint
 import           Data.Proxy
 import           Data.Random
 import           Data.Type.Equality
 import           Data.Vector (Vector)
 import qualified Data.Vector.Generic as V
 import           GHC.TypeLits
+import           Unsafe.Coerce
 
 import           AI.Funn.Common
 import           AI.Funn.Diff.Diff (Diff(..), Derivable(..), (>>>))
@@ -56,39 +61,47 @@ openNetwork (Network p diff initial) =
     Just Refl -> Just (diff, initial)
     Nothing -> Nothing
 
+type family Pars (size :: Nat) :: Nat
+
+parDict :: KnownNat size => Proxy size -> Dict (KnownNat (Pars size))
+parDict size = case stepNetwork @IO size of
+                 Network (Proxy :: Proxy ps) _ _ -> unsafeCoerce (Dict :: Dict (KnownNat ps))
+
 data Model m size where
-  Model :: KnownNat p => {
-    modelStep :: Diff m (Blob p, (StepState size, Blob 256)) (StepState size, Blob 256),
-    modelRun :: Diff m ((Blob p, StepState size), Vector (Blob 256)) (Vector (Blob 256)),
-    modelEval :: Diff m ((Blob p, StepState size), (Vector (Blob 256), Vector Int)) Double
+  Model :: KnownNat (Pars size) => {
+    modelStep :: Diff m (Blob (Pars size), (StepState size, Blob 256)) (StepState size, Blob 256),
+    modelRun :: Diff m ((Blob (Pars size), StepState size), Vector (Blob 256)) (Vector (Blob 256)),
+    modelEval :: Diff m ((Blob (Pars size), StepState size), (Vector (Blob 256), Vector Int)) Double
     } -> Model m size
 
 buildModel :: (Monad m, KnownNat size) => Proxy size -> Model m size
-buildModel size = case stepNetwork size of
-                    Network _ diff_step _ ->
-                      let Just (diff_run, _) = openNetwork (allNetwork size)
+buildModel size = case parDict size of
+                    Dict ->
+                      let Just (diff_step, _) = openNetwork (stepNetwork size)
+                          Just (diff_run, _) = openNetwork (allNetwork size)
                           Just (diff_eval, _) = openNetwork (evalNetwork size)
-                      in Model diff_step (Diff.assocR >>> diff_run) (Diff.assocR >>> diff_eval)
+                      in (Model diff_step (Diff.assocR >>> diff_run)
+                           (Diff.assocR >>> diff_eval))
 
 data ModelPars size where
-  ModelPars :: KnownNat p => Blob p -> StepState size -> ModelPars size
+  ModelPars :: KnownNat (Pars size) => Blob (Pars size) -> StepState size -> ModelPars size
 
 sampleIO :: MonadIO m => RVar a -> m a
 sampleIO v = liftIO (runRVar v StdRandom)
 
 initialize :: KnownNat size => Proxy size -> IO (ModelPars size)
-initialize size = case stepNetwork @IO size of
-                    Network _ _ initrvar -> do
-                      p <- sampleIO initrvar
-                      s0 <- Blob.generate (pure 0)
-                      s1 <- Blob.generate (pure 0)
-                      return (ModelPars p (s0, s1))
+initialize size = case parDict size of
+                    Dict -> case openNetwork (stepNetwork @IO size) of
+                      Just (_, initrvar) -> do
+                        p <- sampleIO initrvar
+                        s0 <- Blob.generate (pure 0)
+                        s1 <- Blob.generate (pure 0)
+                        return (ModelPars p (s0, s1))
 
 storePars :: forall size. KnownNat size => FilePath -> ModelPars size -> IO ()
 storePars fname (ModelPars pars (s0, s1)) = BL.writeFile fname bs
   where
     bput = do BL.putInt64le size
-              BL.putInt64le p
               BL.put pars
               BL.put s0
               BL.put s1
@@ -96,16 +109,16 @@ storePars fname (ModelPars pars (s0, s1)) = BL.writeFile fname bs
     size = fromIntegral (natVal (Proxy @ size))
     p = fromIntegral (natVal pars)
 
-data ModelWrapped = forall size. KnownNat size => ModelWrapped (ModelPars size)
+data ParsWrapped = forall size. KnownNat size => ParsWrapped (ModelPars size)
 
-readPars :: FilePath -> IO ModelWrapped
+readPars :: FilePath -> IO ParsWrapped
 readPars fname = BL.runGet bget <$> BL.readFile fname
   where
     bget = do size <- BL.getInt64le
-              p <- BL.getInt64le
-              withNat (fromIntegral size) $ \(Proxy :: Proxy size) -> do
-                withNat (fromIntegral p) $ \(Proxy :: Proxy p) -> do
-                  (pars :: Blob p) <- BL.get
-                  (s0 :: Blob size) <- BL.get
-                  (s1 :: Blob size) <- BL.get
-                  return (ModelWrapped (ModelPars pars (s0,s1)))
+              withNat (fromIntegral size) $ \(psize :: Proxy size) -> do
+                case parDict psize of
+                  Dict -> do
+                    (pars :: Blob (Pars size)) <- BL.get
+                    (s0 :: Blob size) <- BL.get
+                    (s1 :: Blob size) <- BL.get
+                    return (ParsWrapped (ModelPars pars (s0,s1)))
