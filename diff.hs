@@ -10,6 +10,8 @@
 {-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 module Main where
 
+import           Prelude hiding ((.))
+
 import           Control.Applicative
 import           Control.Category
 import           Control.Concurrent
@@ -58,10 +60,11 @@ import           AI.Funn.Flat.Flat
 import           AI.Funn.Flat.LSTM
 import           AI.Funn.Flat.Mixing
 import           AI.Funn.Flat.ParBox
-import           AI.Funn.SGD
-import           AI.Funn.Optimizer.SGD
-import           AI.Funn.Optimizer.Adam
+import           AI.Funn.Flat.Softmix
 import           AI.Funn.Optimizer.AMSGrad
+import           AI.Funn.Optimizer.Adam
+import           AI.Funn.Optimizer.SGD
+import           AI.Funn.SGD
 import           AI.Funn.Space
 import           AI.Funn.TypeLits
 
