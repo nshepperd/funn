@@ -16,6 +16,7 @@ import qualified AI.Funn.Diff.Diff as Diff
 import           AI.Funn.Flat.Blob (Blob, blob, getBlob)
 import qualified AI.Funn.Flat.Blob as Blob
 import           AI.Funn.Flat.Flat
+import           AI.Funn.Flat.Softmix
 import           AI.Funn.Flat.LSTM
 import           AI.Funn.Flat.Mixing
 import           AI.Funn.Space
@@ -64,6 +65,9 @@ prop_quadraticcost = checkGradientI (quadraticCost @Identity @10)
 
 prop_softmaxcost :: Property
 prop_softmaxcost = checkGradientI (putR 0 >>> softmaxCost @Identity @3)
+
+prop_softmixdiff :: Property
+prop_softmixdiff = checkGradientI (softmixDiff @3)
 
 prop_lstmdiff :: Property
 prop_lstmdiff = checkGradientI (lstmDiff @2)
