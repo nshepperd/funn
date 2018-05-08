@@ -170,6 +170,95 @@ evalNetwork size = Diff.assocL >>> Diff.first network' >>> zipDiff >>> mapDiff s
   where
     network' = network size
 
+train :: KnownNat modelSize => Proxy modelSize -> Blob _ -> FilePath -> (Maybe FilePath) -> (Maybe FilePath) -> Int -> Double -> IO ()
+train modelSize initialParameters input savefile logfile chunkSize learningRate =
+  do
+    let
+      step' = step modelSize
+      evalNetwork' = evalNetwork modelSize
+
+      runrnn par s c = do
+        ((c', o), _) <- Diff.runDiff step' (par, (s, c))
+        return (c', o)
+
+    print (natVal initialParameters)
+
+    text <- B.readFile input
+    running_average <- newIORef 0
+    running_count <- newIORef 0
+    iteration <- newIORef (0 :: Int)
+    startTime <- getTime ProcessCPUTime
+    let
+      α :: Double
+      α = 0.99
+
+      tvec = V.fromList (filter (<128) $ B.unpack text) :: U.Vector Word8
+      ovec = V.map (\c -> onehot V.! (fromIntegral c)) (V.convert tvec) :: Vector (Blob 128)
+
+      source :: IO (Vector (Blob 128), Vector Int)
+      source = do s <- sampleIO (uniform 0 (V.length tvec - chunkSize))
+                  let
+                    input = (onehot V.! 0) `V.cons` V.slice s (chunkSize - 1) ovec
+                    output = V.map fromIntegral (V.convert (V.slice s chunkSize tvec))
+                  return (input, output)
+
+      objective p = do
+        sample <- source
+        (err, k) <- Diff.runDiff evalNetwork' (p,sample)
+
+        when (not (isInfinite err || isNaN err)) $ do
+          modifyIORef' running_average (\x -> (α*x + (1 - α)*err))
+          modifyIORef' running_count (\x -> (α*x + (1 - α)*1))
+
+        putStrLn $ "Error: " ++ show err
+        (dp, _) <- k 1
+        return dp
+
+      next p m = do
+        x <- do q <- readIORef running_average
+                w <- readIORef running_count
+                return ((q / w) / fromIntegral chunkSize)
+        modifyIORef' iteration (+1)
+        i <- readIORef iteration
+        now <- getTime ProcessCPUTime
+        let tdiff = fromIntegral (toNanoSecs (now - startTime)) / (10^9) :: Double
+        putStrLn $ printf "[% 11.4f | %i]  %f" tdiff i x
+
+        when (i `mod` 50 == 0) $ do
+          let (par, c0) = Blob.split p
+          msg <- sampleRNN 200 (Blob.split c0) (runrnn par)
+          putStrLn (filter (\c -> isPrint c || isSpace c) msg)
+
+        when (i `mod` 100 == 0) $ do
+          case savefile of
+            Just savefile -> do
+              LB.writeFile (printf "%s-%6.6i-%5.5f.bin" savefile i x) $ LB.encode (natVal modelSize, ParBox p)
+              LB.writeFile (savefile ++ "-latest.bin") $ LB.encode (natVal modelSize, ParBox p)
+            Nothing -> return ()
+        m
+
+    deepseqM (tvec, ovec)
+
+    -- trainState <- initSGD learningRate 0.9 plus initialParameters
+    -- let go trainState = do
+    --       grad <- objective (extractSGD trainState)
+    --       trainState' <- updateSGD grad trainState
+    --       next (extractSGD trainState') (go trainState')
+
+    trainState <- initAdam (Blob.adamBlob { adam_α = learningRate }) initialParameters
+    let go trainState = do
+          grad <- objective (extractAdam trainState)
+          trainState' <- updateAdam grad trainState
+          next (extractAdam trainState') (go trainState')
+
+    -- trainState <- initAMS (Blob.adamBlob { adam_α = learningRate }) (\a b -> pure $ Blob.zipBlob max a b) initialParameters
+    -- let go trainState = do
+    --       grad <- objective (extractAMS trainState)
+    --       trainState' <- updateAMS grad trainState
+    --       next (extractAMS trainState') (go trainState')
+
+    go trainState
+
 
 main :: IO ()
 main = do
@@ -196,97 +285,6 @@ main = do
                    fullDesc)
 
   cmd <- customExecParser (prefs showHelpOnError) optparser
-
-  let
-    train :: KnownNat modelSize => Proxy modelSize -> Blob _ -> FilePath -> (Maybe FilePath) -> (Maybe FilePath) -> Int -> Double -> IO ()
-    train modelSize initialParameters input savefile logfile chunkSize learningRate =
-      do
-        let
-          step' = step modelSize
-          evalNetwork' = evalNetwork modelSize
-
-          runrnn par s c = do
-            ((c', o), _) <- Diff.runDiff step' (par, (s, c))
-            return (c', o)
-
-        print (natVal initialParameters)
-
-        text <- B.readFile input
-        running_average <- newIORef 0
-        running_count <- newIORef 0
-        iteration <- newIORef (0 :: Int)
-        startTime <- getTime ProcessCPUTime
-        let
-          α :: Double
-          α = 0.99
-
-          tvec = V.fromList (filter (<128) $ B.unpack text) :: U.Vector Word8
-          ovec = V.map (\c -> onehot V.! (fromIntegral c)) (V.convert tvec) :: Vector (Blob 128)
-
-          source :: IO (Vector (Blob 128), Vector Int)
-          source = do s <- sampleIO (uniform 0 (V.length tvec - chunkSize))
-                      let
-                        input = (onehot V.! 0) `V.cons` V.slice s (chunkSize - 1) ovec
-                        output = V.map fromIntegral (V.convert (V.slice s chunkSize tvec))
-                      return (input, output)
-
-          objective p = do
-            sample <- source
-            (err, k) <- Diff.runDiff evalNetwork' (p,sample)
-
-            when (not (isInfinite err || isNaN err)) $ do
-              modifyIORef' running_average (\x -> (α*x + (1 - α)*err))
-              modifyIORef' running_count (\x -> (α*x + (1 - α)*1))
-
-            putStrLn $ "Error: " ++ show err
-            (dp, _) <- k 1
-            return dp
-
-          next p m = do
-            x <- do q <- readIORef running_average
-                    w <- readIORef running_count
-                    return ((q / w) / fromIntegral chunkSize)
-            modifyIORef' iteration (+1)
-            i <- readIORef iteration
-            now <- getTime ProcessCPUTime
-            let tdiff = fromIntegral (toNanoSecs (now - startTime)) / (10^9) :: Double
-            putStrLn $ printf "[% 11.4f | %i]  %f" tdiff i x
-
-            when (i `mod` 50 == 0) $ do
-              let (par, c0) = Blob.split p
-              msg <- sampleRNN 200 (Blob.split c0) (runrnn par)
-              putStrLn (filter (\c -> isPrint c || isSpace c) msg)
-
-            when (i `mod` 100 == 0) $ do
-              case savefile of
-                Just savefile -> do
-                  LB.writeFile (printf "%s-%6.6i-%5.5f.bin" savefile i x) $ LB.encode (natVal modelSize, ParBox p)
-                  LB.writeFile (savefile ++ "-latest.bin") $ LB.encode (natVal modelSize, ParBox p)
-                Nothing -> return ()
-            m
-
-        deepseqM (tvec, ovec)
-
-        -- trainState <- initSGD learningRate 0.9 plus initialParameters
-        -- let go trainState = do
-        --       grad <- objective (extractSGD trainState)
-        --       trainState' <- updateSGD grad trainState
-        --       next (extractSGD trainState') (go trainState')
-
-        trainState <- initAdam (Blob.adamBlob { adam_α = learningRate }) initialParameters
-        let go trainState = do
-              grad <- objective (extractAdam trainState)
-              trainState' <- updateAdam grad trainState
-              next (extractAdam trainState') (go trainState')
-
-        -- trainState <- initAMS (Blob.adamBlob { adam_α = learningRate }) (\a b -> pure $ Blob.zipBlob max a b) initialParameters
-        -- let go trainState = do
-        --       grad <- objective (extractAMS trainState)
-        --       trainState' <- updateAMS grad trainState
-        --       next (extractAMS trainState') (go trainState')
-
-        go trainState
-
 
   case cmd of
     Train Nothing input savefile logfile chunkSize lr modelSize -> do
