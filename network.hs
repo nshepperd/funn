@@ -65,7 +65,7 @@ import           AI.Funn.Network.Mixing
 import           AI.Funn.Network.Network
 import qualified AI.Funn.Network.Network as Network
 import           AI.Funn.Network.RNN
-import           AI.Funn.SGD
+import           AI.Funn.Optimizer.Adam
 import           AI.Funn.Space
 import           AI.Funn.TypeLits
 
@@ -223,7 +223,12 @@ train modelSize initialParameters input savefile logfile chunkSize learningRate 
 
             deepseqM (tvec, ovec)
 
-            adam (Blob.adamBlob { adam_α = learningRate }) start_params objective next
+            trainState <- initAdam learningRate 0.9 0.999 1e-8 start_params :: IO (AdamState IO (Blob _) (Blob _))
+            let go trainState = do
+                  grad <- objective (extractAdam trainState)
+                  trainState' <- updateAdam grad trainState
+                  next (extractAdam trainState') (go trainState')
+            go trainState
 
 main :: IO ()
 main = do

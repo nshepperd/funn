@@ -3,7 +3,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 module AI.Funn.Flat.Blob (Blob, generate, split, cat,
                           blob, getBlob, mapBlob, zipBlob,
-                          fromList, toList, scale, adamBlob,
+                          fromList, toList, scale
                          ) where
 
 import           Control.Applicative
@@ -25,12 +25,12 @@ import qualified Numeric.LinearAlgebra.HMatrix as HM
 import           System.IO.Unsafe
 
 import           AI.Funn.Common
-import           AI.Funn.SGD
 import           AI.Funn.Diff.Diff (Diff(..), Derivable(..))
 import qualified AI.Funn.Diff.Diff as Diff
-import           AI.Funn.Space
 import           AI.Funn.Flat.Buffer (Buffer)
 import qualified AI.Funn.Flat.Buffer as Buffer
+import           AI.Funn.Optimizer.Adam
+import           AI.Funn.Space
 
 newtype Blob (n :: Nat) = Blob Buffer
                         deriving (Show, Read)
@@ -62,6 +62,18 @@ instance (Applicative m, KnownNat n) => Inner m Double (Blob n) where
 
 instance (Applicative m, KnownNat n) => Finite m Double (Blob n) where
   getBasis b = pure (toList b)
+
+
+
+instance (Monad m, KnownNat n) => AdamOps m (Blob n) where
+  adam_pure_d x = generate (pure x)
+  adam_square_d b = pure $ mapBlob (^2) b
+  adam_sqrt_d b = pure $ mapBlob sqrt b
+  adam_divide_d x y = pure $ blob (V.zipWith (/) (getBlob x) (getBlob y))
+
+instance (AdamOps m (Blob n)) => Adam m (Blob n) (Blob n) where
+  adam_update_p = plus
+
 
 instance Eq (Blob n) where
   b1 == b2  =  getBlob b1 == getBlob b2
@@ -119,16 +131,3 @@ mapBlob f b = blob (V.map f (getBlob b))
 
 zipBlob :: (Double -> Double -> Double) -> Blob n -> Blob n -> Blob n
 zipBlob f a b = blob (V.zipWith f (getBlob a) (getBlob b))
-
-adamBlob :: forall m (n :: Nat). (Monad m, KnownNat n) => AdamConfig m (Blob n) (Blob n)
-adamBlob = defaultAdam {
-  adam_pure_d = \x -> generate (pure x),
-  adam_scale_d = \x b -> scale x b,
-  adam_add_d = plus,
-  adam_square_d = \b -> pure $ mapBlob (^2) b,
-  adam_sqrt_d = \b -> pure $ mapBlob sqrt b,
-  adam_divide_d = \x y -> pure $ blob (V.zipWith (/) (getBlob x) (getBlob y)),
-  adam_update_p = plus
-  }
-  where
-    n = fromIntegral (natVal (Proxy :: Proxy n))

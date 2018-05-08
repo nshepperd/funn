@@ -64,7 +64,6 @@ import           AI.Funn.Flat.Softmix
 import           AI.Funn.Optimizer.AMSGrad
 import           AI.Funn.Optimizer.Adam
 import           AI.Funn.Optimizer.SGD
-import           AI.Funn.SGD
 import           AI.Funn.Space
 import           AI.Funn.TypeLits
 
@@ -245,7 +244,7 @@ train modelSize initialParameters input savefile logfile chunkSize learningRate 
     --       trainState' <- updateSGD grad trainState
     --       next (extractSGD trainState') (go trainState')
 
-    trainState <- initAdam (Blob.adamBlob { adam_α = learningRate }) initialParameters
+    trainState <- initAdam learningRate 0.9 0.999 1e-8 initialParameters :: IO (AdamState IO (Blob _) (Blob _))
     let go trainState = do
           grad <- objective (extractAdam trainState)
           trainState' <- updateAdam grad trainState

@@ -32,7 +32,6 @@ import           AI.Funn.Diff.Diff (Diff(..), Additive(..), Derivable(..))
 import qualified AI.Funn.Diff.Diff as Diff
 import           AI.Funn.Flat.Blob (Blob(..), blob, getBlob)
 import qualified AI.Funn.Flat.Blob as Blob
-import           AI.Funn.SGD
 import           AI.Funn.Space
 
 -- Diff --
