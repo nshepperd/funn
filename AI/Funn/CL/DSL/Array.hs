@@ -11,7 +11,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeOperators #-}
-module AI.Funn.CL.DSL.Array (Index(..), (!), at) where
+module AI.Funn.CL.DSL.Array (Index(..), (!)) where
 
 import           Control.Monad
 import           Control.Monad.Free

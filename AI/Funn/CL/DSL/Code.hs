@@ -31,7 +31,6 @@ newtype Var a = Var { varName :: AST.Name }
 newtype Expr a = Expr AST.Expr
   deriving (Show)
 
-
 class Variable a where
   declare :: Var a -> AST.Decl
 
@@ -49,6 +48,9 @@ instance Variable Double where
 
 exprVar :: Var a -> Expr a
 exprVar (Var name) = Expr (AST.ExprVar name)
+
+castExpr :: Expr a -> Expr b
+castExpr (Expr x) = Expr x
 
 class Argument a where
   declareArgument :: AST.Name -> (a, [AST.Decl])

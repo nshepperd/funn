@@ -43,18 +43,18 @@ instance Show (DimDict ds) where
   showsPrec n (DimSucc d ds) = showParen (n > 10) $
     showString "DimSucc " . showsPrec 11 d . showString " " . showsPrec 11 ds
 
-declareDict :: AST.Name -> Int -> KnownDimsOf ds -> (DimDict ds, [AST.Decl])
-declareDict name n KnownDimsZero = (DimZero, [])
-declareDict name n (KnownDimsSucc _ xs) = (DimSucc d ds, darg ++ dsargs)
+declareDict :: AST.Name -> Int -> KnownListOf ds -> (DimDict ds, [AST.Decl])
+declareDict name n KnownListNil = (DimZero, [])
+declareDict name n (KnownListCons xs) = (DimSucc d ds, darg ++ dsargs)
   where
       (ds, dsargs) = declareDict name (n+1) xs
       (d, darg) = declareArgument (name ++ "_" ++ show n)
 
 
-instance KnownDims ds => Argument (DimDict ds) where
-  declareArgument name = declareDict name 0 (knownDims (Proxy :: Proxy ds))
+instance KnownList ds => Argument (DimDict ds) where
+  declareArgument name = declareDict name 0 (knownList (Proxy @ ds))
 
-instance (Argument (Array m Double), KnownDims ds) => Argument (CTensor m ds) where
+instance (Argument (Array m Double), KnownList ds) => Argument (CTensor m ds) where
   declareArgument name = (CTensor dim arr, dim_args ++ arr_args)
     where
       (dim, dim_args) = declareArgument name

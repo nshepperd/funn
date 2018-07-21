@@ -174,6 +174,20 @@ instance (Applicative m, Num x, Finite m x a, Finite m x b, Finite m x c) => Fin
 
 -- Dimensions --
 
+data KnownListOf (ds :: [k]) where
+  KnownListNil :: KnownListOf '[]
+  KnownListCons :: KnownListOf ds -> KnownListOf (d ': ds)
+
+class KnownList (ds :: [k]) where
+  knownList :: proxy ds -> KnownListOf ds
+
+instance KnownList '[] where
+  knownList _ = KnownListNil
+
+instance KnownList ds => KnownList (d ': ds) where
+  knownList _ = KnownListCons (knownList Proxy)
+
+
 type family Prod (ds :: [Nat]) :: Nat where
   Prod '[] = 1
   Prod (d ': ds) = d * Prod ds
@@ -186,7 +200,7 @@ data KnownDimsOf (ds :: [Nat]) where
   KnownDimsZero :: KnownDimsOf '[]
   KnownDimsSucc :: Int -> KnownDimsOf ds -> KnownDimsOf (d ': ds)
 
-class (KnownNat (Prod ds), KnownDimsF ds) => KnownDims (ds :: [Nat]) where
+class (KnownNat (Prod ds), KnownList ds, KnownDimsF ds) => KnownDims (ds :: [Nat]) where
   knownDims :: proxy ds -> KnownDimsOf ds
 
 instance KnownDims '[] where

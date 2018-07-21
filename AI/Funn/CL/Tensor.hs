@@ -1,4 +1,3 @@
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -18,11 +17,13 @@ module AI.Funn.CL.Tensor (
   -- Core
   copyInto,
   freeze,
+  fromBlob,
   fromList,
   fromVector,
   new,
   replicate,
   thaw,
+  toBlob,
   toList,
   toVector,
   unsafeFreeze,
@@ -40,26 +41,21 @@ import           Control.Applicative
 import           Control.Exception
 import           Control.Monad
 import           Control.Monad.IO.Class
-import           Data.Constraint (Dict(..))
 import qualified Data.Foldable as F
 import           Data.Foldable hiding (toList)
 import           Data.IORef
 import           Data.List hiding (replicate)
-import           Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
 import           Data.Monoid
 import           Data.Proxy
 import           Data.Traversable
 import qualified Data.Vector.Generic as V
 import qualified Data.Vector.Storable as S
-import           Foreign.Storable
-import           GHC.Float
-import           GHC.Stack
 import           GHC.TypeLits
-import           GHC.Types (Constraint)
 import           Prelude hiding (replicate)
 import           System.IO.Unsafe
 
+import           AI.Funn.CL.Blob (Blob, BlobT(Blob))
+import qualified AI.Funn.CL.Blob as Blob
 import           AI.Funn.CL.Buffer (Buffer)
 import qualified AI.Funn.CL.Buffer as Buffer
 import qualified AI.Funn.CL.DSL.AST as AST
@@ -151,6 +147,12 @@ fromVector xs = do when (n /= V.length xs) $ liftIO $ do
 
 toVector :: (MonadIO m) => Tensor ds -> m (S.Vector Double)
 toVector (Tensor mem) = Buffer.toVector mem
+
+fromBlob :: Blob Double (Prod ds) -> Tensor ds
+fromBlob (Blob mem) = Tensor mem
+
+toBlob :: Tensor ds -> Blob Double (Prod ds)
+toBlob (Tensor mem) = Blob mem
 
 copyInto :: forall ds m. (MonadIO m, KnownDims ds) => Tensor ds -> MTensor ds -> m ()
 copyInto (Tensor src) (MTensor dst) = Buffer.copy src dst 0 0 (dimSize (Proxy @ ds))
