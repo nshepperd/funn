@@ -112,6 +112,9 @@ getKernel key src entryPoint = liftIO $ do
 
 newtype KernelArg = KernelArg (([CL.KernelArg] -> IO ()) -> IO ())
 
+instance Semigroup KernelArg where
+  (<>) = mappend
+
 instance Monoid KernelArg where
   mempty = KernelArg (\k -> k [])
   mappend (KernelArg f1) (KernelArg f2) = KernelArg $ \k ->

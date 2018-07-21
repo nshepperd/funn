@@ -35,6 +35,9 @@ instance NFData Buffer where
     vs <- readIORef ref
     return (rnf vs)
 
+instance Semigroup Buffer where
+  (<>) = append
+
 instance Monoid Buffer where
   mempty = empty_buffer
   mappend = append

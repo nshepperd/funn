@@ -111,6 +111,9 @@ runPoint f = case go 1 (f ref_a) of
     go index (Free (TellStep s k)) = let res = go index k
                                      in (fst res, s : snd res)
 
+instance Monad m => Semigroup (Step m s) where
+  (<>) = mappend
+
 instance Monad m => Monoid (Step m s) where
   mempty = Step [] [] id
   mappend (Step as bs d1) (Step as' bs' d2) =
