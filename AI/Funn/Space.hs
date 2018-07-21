@@ -1,18 +1,30 @@
-{-# LANGUAGE DefaultSignatures #-}
-{-# LANGUAGE FlexibleContexts, FlexibleInstances #-}
-{-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 module AI.Funn.Space where
 
 import Control.Applicative
 import Data.Foldable
 import Data.Functor.Identity
+import Data.Kind (Constraint)
 import Data.Proxy
 import Foreign.Storable
 import GHC.Float
 import GHC.Stack
+import GHC.TypeLits
 
 data Precision = FP32 | FP64
   deriving (Show, Eq, Ord)
@@ -159,3 +171,36 @@ instance (Applicative m, Num x, Finite m x a, Finite m x b, Finite m x c) => Fin
                         <$> getBasis a
                         <*> getBasis b
                         <*> getBasis c
+
+-- Dimensions --
+
+type family Prod (ds :: [Nat]) :: Nat where
+  Prod '[] = 1
+  Prod (d ': ds) = d * Prod ds
+
+type family KnownDimsF (ds :: [Nat]) :: Constraint where
+  KnownDimsF '[] = ()
+  KnownDimsF (d ': ds) = (KnownNat d, KnownDimsF ds)
+
+data KnownDimsOf (ds :: [Nat]) where
+  KnownDimsZero :: KnownDimsOf '[]
+  KnownDimsSucc :: Int -> KnownDimsOf ds -> KnownDimsOf (d ': ds)
+
+class (KnownNat (Prod ds), KnownDimsF ds) => KnownDims (ds :: [Nat]) where
+  knownDims :: proxy ds -> KnownDimsOf ds
+
+instance KnownDims '[] where
+  knownDims _ = KnownDimsZero
+
+instance (KnownNat d, KnownDims ds) => KnownDims (d ': ds) where
+  knownDims _ = KnownDimsSucc (fromIntegral (natVal (Proxy :: Proxy d))) (knownDims Proxy)
+
+dimVal :: KnownDims ds => proxy ds -> [Int]
+dimVal p = go (knownDims p)
+  where
+    go :: KnownDimsOf x -> [Int]
+    go KnownDimsZero = []
+    go (KnownDimsSucc d ds) = d : go ds
+
+dimSize :: KnownDims ds => proxy ds -> Int
+dimSize p = product (dimVal p)

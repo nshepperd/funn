@@ -27,7 +27,10 @@ import qualified AI.Funn.CL.DSL.AST as AST
 import           AI.Funn.Space
 
 newtype Var a = Var { varName :: AST.Name }
+
 newtype Expr a = Expr AST.Expr
+  deriving (Show)
+
 
 class Variable a where
   declare :: Var a -> AST.Decl
@@ -311,7 +314,10 @@ class Compare a where
 instance Compare Int
 
 data Mode = R | W
+
 newtype Array (m :: Mode) a = Array AST.Name
+  deriving Show
+
 type ArrayR = Array R
 type ArrayW = Array W
 
@@ -338,9 +344,3 @@ instance Argument (Array W Double) where
     where
       base = AST.Decl "__global double*" (argName ++ "_base")
       offset = AST.Decl "const int" (argName ++ "_offset")
-
-at :: Array m a -> Expr Int -> Expr a
-at (Array name) (Expr i) = Expr (AST.ExprIndex (name ++ "_base") index)
-  where
-    offset = AST.ExprVar (name ++ "_offset")
-    index = AST.ExprOp offset "+" i

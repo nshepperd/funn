@@ -47,6 +47,7 @@ import           System.IO.Unsafe
 
 import           AI.Funn.CL.Buffer (Buffer)
 import qualified AI.Funn.CL.Buffer as Buffer
+import           AI.Funn.CL.DSL.Array
 import           AI.Funn.CL.DSL.Code as C
 import           AI.Funn.CL.Function
 import           AI.Funn.CL.MonadCL

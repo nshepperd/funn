@@ -21,6 +21,7 @@ import           System.IO.Unsafe
 
 import           AI.Funn.CL.Blob
 import qualified AI.Funn.CL.Blob as Blob
+import           AI.Funn.CL.DSL.Array
 import           AI.Funn.CL.DSL.Code as C
 import           AI.Funn.CL.Function
 import           AI.Funn.CL.MonadCL

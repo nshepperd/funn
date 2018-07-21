@@ -27,6 +27,7 @@ import           GHC.Stack
 import           System.IO.Unsafe
 
 import           AI.Funn.CL.DSL.Code
+import           AI.Funn.CL.DSL.Array
 import           AI.Funn.CL.Function
 import           AI.Funn.CL.MemSub (MemSub)
 import qualified AI.Funn.CL.MemSub as MemSub
@@ -55,8 +56,8 @@ compact (Buffer ioref) = unsafePerformIO $ do
   case Tree.downFree tree of
     Just mem -> return mem
     Nothing  -> do mem <- Tree.down tree
-                   putStrLn $ "compacting " ++ Tree.treeShow tree
-                   putStrLn $ "at " ++ prettyCallStack callStack
+                   -- putStrLn $ "compacting " ++ Tree.treeShow tree
+                   -- putStrLn $ "at " ++ prettyCallStack callStack
                    writeIORef ioref (Tree.up mem)
                    return mem
 

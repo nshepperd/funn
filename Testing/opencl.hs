@@ -10,34 +10,40 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-import Prelude hiding (id)
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
+
 import           Control.Category ((>>>), id)
 import           Control.Monad.Trans
 import           Data.Functor.Identity
 import           Data.Proxy
+import qualified Data.Vector.Generic as V
 import           GHC.TypeLits
+import           Prelude hiding (id)
 import           Test.QuickCheck hiding (scale)
 import           Test.QuickCheck.Gen
 import           Test.QuickCheck.Gen.Unsafe
 import           Test.QuickCheck.Monadic
 import           Unsafe.Coerce
 
-import           AI.Funn.Diff.Diff (Diff(..), Derivable(..), runDiffForward)
-import qualified AI.Funn.Diff.Diff as Diff
-import           AI.Funn.CL.MonadCL
 import           AI.Funn.CL.Blob
 import qualified AI.Funn.CL.Blob as Blob
 import qualified AI.Funn.CL.Buffer as Buffer
 import           AI.Funn.CL.Flat
 import           AI.Funn.CL.LSTM
 import           AI.Funn.CL.Mixing
+import           AI.Funn.CL.MonadCL
+import           AI.Funn.CL.Tensor (Tensor)
+import qualified AI.Funn.CL.Tensor as Tensor
+import           AI.Funn.Diff.Diff (Diff(..), Derivable(..), runDiffForward)
+import qualified AI.Funn.Diff.Diff as Diff
 import qualified AI.Funn.Flat.Blob as C
 import qualified AI.Funn.Flat.Flat as C
 import qualified AI.Funn.Flat.LSTM as C
 import qualified AI.Funn.Flat.Mixing as C
 import           AI.Funn.Space
 
-import Testing.Util
+import           Testing.Util
 
 -- Setup for OpenCL test cases.
 
@@ -179,6 +185,63 @@ prop_Blob_split = monadic clProperty $ do
   let (x1, y1) = Blob.splitBlob @2 @7 zs
   z1 <- lift (Blob.catBlob x1 y1)
   assertEqual zs z1
+
+-- Tensor properties.
+
+pickTensor :: forall ds. (KnownDims ds) => PropertyM IO (Tensor ds)
+pickTensor = do blob <- pickBlob :: PropertyM IO (Blob Double (Prod ds))
+                xs <- lift (Blob.toVector blob)
+                lift (Tensor.fromVector xs)
+
+
+tensorsEqual :: (KnownDims ds) => Tensor ds -> Tensor ds -> PropertyM IO ()
+tensorsEqual one two = do one_c <- lift (Tensor.toVector one)
+                          two_c <- lift (Tensor.toVector two)
+                          stop (one_c === two_c)
+
+prop_Tensor_sub_zero :: Property
+prop_Tensor_sub_zero = monadic clProperty $ do
+  xs <- pickTensor @[3,4]
+  zs <- zero
+  ys <- Tensor.subTensor xs zs
+  tensorsEqual xs ys
+
+prop_Tensor_plus_zero :: Property
+prop_Tensor_plus_zero = monadic clProperty $ do
+  xs <- pickTensor @[3,4]
+  z <- zero
+  ys <- plus xs z
+  tensorsEqual xs ys
+
+prop_Tensor_plus :: Property
+prop_Tensor_plus = monadic clProperty $ do
+  xs <- pickTensor @[3,4]
+  ys <- pickTensor @[3,4]
+  z1 <- plus xs ys
+  xs_c <- Tensor.toVector xs
+  ys_c <- Tensor.toVector ys
+  let zs_c = V.zipWith (+) xs_c ys_c
+  z2 <- Tensor.fromVector zs_c
+  tensorsEqual z1 z2
+
+prop_Tensor_mul :: Property
+prop_Tensor_mul = monadic clProperty $ do
+  xs <- pickTensor @[3,4]
+  ys <- pickTensor @[3,4]
+  z1 <- Tensor.mulTensor xs ys
+  xs_c <- Tensor.toVector xs
+  ys_c <- Tensor.toVector ys
+  let zs_c = V.zipWith (*) xs_c ys_c
+  z2 <- Tensor.fromVector zs_c
+  tensorsEqual z1 z2
+
+prop_Tensor_plusm :: Property
+prop_Tensor_plusm = monadic clProperty $ do
+  xs <- pickTensor @[3,4]
+  ys <- pickTensor @[3,4]
+  z1 <- plus xs ys
+  z2 <- plusm [xs, ys]
+  tensorsEqual z1 z2
 
 
 -- OpenCL flat diff
