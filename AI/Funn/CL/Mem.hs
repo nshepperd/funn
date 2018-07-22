@@ -29,6 +29,7 @@ data CMem
 newtype Mem a = Mem (ForeignPtr CMem)
               deriving Show
 
+foreign import ccall "&clReleaseMemObject" clReleaseMemObject :: FunPtr (Ptr CMem -> IO ())
 foreign import ccall "&clmem_free" clmem_free :: FunPtr (Ptr CMem -> IO ())
 foreign import ccall "clmem_increase" clmem_increase :: Int64 -> IO ()
 foreign import ccall "clmem_count" clmem_count :: IO Int64
@@ -87,7 +88,7 @@ fromAlloc :: MonadIO m => IO (CL.MemObject a) -> m (Mem a)
 fromAlloc alloc = liftIO $ do memobj <- tryAllocation alloc
                               size <- CL.memobjSize memobj
                               clmem_increase (fromIntegral size)
-                              foreignptr <- newForeignPtr clmem_free (unsafeExtract memobj)
+                              foreignptr <- newForeignPtr clReleaseMemObject (unsafeExtract memobj)
                               return (Mem foreignptr)
 
 tryAllocation :: IO a -> IO a
