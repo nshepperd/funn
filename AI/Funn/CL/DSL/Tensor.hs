@@ -12,7 +12,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
-module AI.Funn.CL.DSL.Tensor (TensorCL, MTensorCL, CTensor(..)) where
+module AI.Funn.CL.DSL.Tensor (TensorCL, MTensorCL, CTensor(..), dimsOf, splitIndex, indexFlat) where
 
 import           Control.Monad
 import           Control.Monad.Free
@@ -79,3 +79,11 @@ index (CTensor (DimSucc _ ds) arr) (i:is) = go ds arr is i
 
 indexFlat :: CTensor m ds -> Expr Int -> Expr Double
 indexFlat (CTensor _ arr) i = at arr i
+
+splitIndex :: [Expr Int] -> Expr Int -> CL [Expr Int]
+splitIndex ds i = reverse <$> go (reverse $ tail ds) i
+  where
+    go (d:ds) i = do a <- eval (i `mod'` d)
+                     i' <- eval (i `div'` d)
+                     (a:) <$> go ds i'
+    go [] i = return [i]

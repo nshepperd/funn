@@ -1,7 +1,7 @@
 {-# LANGUAGE TypeFamilies, MultiParamTypeClasses, FlexibleContexts, FlexibleInstances #-}
 {-# LANGUAGE KindSignatures, DataKinds, TypeOperators #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-module AI.Funn.Flat.Blob (Blob, generate, split, cat,
+module AI.Funn.Flat.Blob (Blob(..), generate, split, cat,
                           blob, getBlob, mapBlob, zipBlob,
                           fromList, toList, scale
                          ) where

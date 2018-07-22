@@ -142,6 +142,7 @@ newvar = liftF (NewVar id)
 initvar :: Variable a => Expr a -> CL (Expr a)
 initvar e = liftF (NewVarAssign e id)
 
+-- Halfopen interval [a, b)
 forEach :: Expr Int -> Expr Int -> (Expr Int -> CL ()) -> CL ()
 forEach from to sub = liftF (ForLoop from to sub ())
 
@@ -171,6 +172,14 @@ instance Num (Expr Int) where
   (+) = operator "+"
   (-) = operator "-"
   (*) = operator "*"
+
+class Euclidean a where
+  div' :: a -> a -> a
+  mod' :: a -> a -> a
+
+instance Euclidean (Expr Int) where
+  div' = operator "/"
+  mod' = operator "%"
 
 class Bitwise a where
   (.&.) :: a -> a -> a
@@ -294,20 +303,28 @@ function name = function_ name []
 get_global_id :: Expr Int -> CL (Expr Int)
 get_global_id i = eval (function "get_global_id" i)
 
-class Relational a where
+class MinMax a where
   fmin :: Expr a -> Expr a -> Expr a
   fmax :: Expr a -> Expr a -> Expr a
+
+class MinMax a => Relational a where
   fstep :: Expr a -> Expr a -> Expr a
 
-instance Relational Float where
+instance MinMax Float where
   fmin = function "min"
   fmax = function "max"
+instance Relational Float where
   fstep = function "step"
 
-instance Relational Double where
+instance MinMax Double where
   fmin = function "min"
   fmax = function "max"
+instance Relational Double where
   fstep = function "step"
+
+instance MinMax Int where
+  fmin = function "min"
+  fmax = function "max"
 
 class Compare a where
   feq :: Expr a -> Expr a -> Expr Bool

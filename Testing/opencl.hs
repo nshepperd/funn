@@ -31,6 +31,7 @@ import qualified AI.Funn.CL.Blob as Blob
 import qualified AI.Funn.CL.Buffer as Buffer
 import           AI.Funn.CL.Flat
 import           AI.Funn.CL.LSTM
+import           AI.Funn.CL.Layers.Misc
 import           AI.Funn.CL.Mixing
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.CL.Tensor (Tensor)
@@ -89,6 +90,10 @@ instance Loadable Double 1 where
 instance (KnownNat n, Floats a) => Loadable (Blob a n) n where
   fromCPU a = Blob.fromList (C.toList a)
   fromGPU a = C.fromList <$> Blob.toList a
+
+instance (KnownDims ds, n ~ Prod ds) => Loadable (Tensor ds) n where
+  fromCPU a = Tensor.fromList (C.toList a)
+  fromGPU t = C.fromList <$> Tensor.toList t
 
 instance (KnownNat n) => Loadable (C.Blob n) n where
   fromCPU a = return a
@@ -269,6 +274,9 @@ prop_mixdiff = checkGradientCL (amixDiff @3 @2 @2 @Double Proxy)
 
 prop_softmaxcost :: Property
 prop_softmaxcost = checkGradientCL (putR 0 >>> softmaxCost @3 @IO @Double)
+
+prop_iconv2d :: Property
+prop_iconv2d = checkGradientCL (iconv2dDiff @2 @3 @3 @2 @2 @IO)
 
 -- Equality
 
