@@ -31,7 +31,9 @@ import qualified AI.Funn.CL.Blob as Blob
 import qualified AI.Funn.CL.Buffer as Buffer
 import           AI.Funn.CL.Flat
 import           AI.Funn.CL.LSTM
+import           AI.Funn.CL.Layers.Convolution
 import           AI.Funn.CL.Layers.Misc
+import           AI.Funn.CL.Layers.Upscale
 import           AI.Funn.CL.Mixing
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.CL.Tensor (Tensor)
@@ -277,6 +279,12 @@ prop_softmaxcost = checkGradientCL (putR 0 >>> softmaxCost @3 @IO @Double)
 
 prop_iconv2d :: Property
 prop_iconv2d = checkGradientCL (iconv2dDiff @2 @3 @3 @2 @2 @IO)
+
+prop_conv2d :: Property
+prop_conv2d = checkGradientCL (conv2dDiff @3 @1 @3 @3 @2 @2 @IO Proxy)
+
+prop_doubleDiff :: Property
+prop_doubleDiff = checkGradientCL (doubleDiff @2 @2 @2)
 
 -- Equality
 
