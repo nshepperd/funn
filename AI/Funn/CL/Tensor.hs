@@ -11,6 +11,9 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
+{-# OPTIONS_GHC -fconstraint-solver-iterations=20 #-}
 module AI.Funn.CL.Tensor (
   Tensor(..), MTensor(..),
   KnownDims(..),
@@ -28,8 +31,11 @@ module AI.Funn.CL.Tensor (
   toVector,
   unsafeFreeze,
   unsafeThaw,
-  -- Arithmetic
   reshape,
+  reshapeM,
+  split,
+  append,
+  -- Arithmetic
   subTensor,
   mulTensor,
   divTensor,
@@ -63,14 +69,16 @@ import           AI.Funn.CL.DSL.Array
 import           AI.Funn.CL.DSL.Code as C
 import           AI.Funn.CL.DSL.Tensor
 import           AI.Funn.CL.Function
+import           AI.Funn.CL.MemSub (MemSub)
+import qualified AI.Funn.CL.MemSub as MemSub
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.Diff.Diff (Derivable(..))
-import           AI.Funn.SGD
+import           AI.Funn.Optimizer.Adam
 import           AI.Funn.Space
 import qualified Foreign.OpenCL.Bindings as CL
 
-newtype Tensor (ds :: [Nat]) = Tensor { getTensor :: Buffer Double }
-newtype MTensor (ds :: [Nat]) = MTensor { getMTensor :: Buffer Double }
+newtype Tensor (ds :: [Nat]) = Tensor { getTensor :: MemSub Double }
+newtype MTensor (ds :: [Nat]) = MTensor { getMTensor :: MemSub Double }
 
 -- Classes --
 
@@ -100,19 +108,19 @@ instance (MonadIO m, KnownDims ds) => Finite m Double (Tensor ds) where
   getBasis b = toList b
 
 instance KnownDims ds => CLType (Tensor ds) (CTensor R ds) where
-  karg (Tensor buf) = foldMap karg ds <> Buffer.arg buf
+  karg (Tensor buf) = foldMap karg ds <> MemSub.arg buf
     where
       ds = dimVal (Proxy @ ds)
 
 instance KnownDims ds => CLType (MTensor ds) (CTensor W ds) where
-  karg (MTensor buf) = foldMap karg ds <> Buffer.arg buf
+  karg (MTensor buf) = foldMap karg ds <> MemSub.arg buf
     where
       ds = dimVal (Proxy @ ds)
 
 -- Main operations --
 
 new :: forall ds m. (MonadIO m, KnownDims ds) => m (MTensor ds)
-new = MTensor <$> Buffer.malloc (product ds)
+new = MTensor <$> MemSub.malloc (product ds)
   where
     ds = dimVal (Proxy :: Proxy ds)
 
@@ -123,49 +131,62 @@ unsafeThaw :: Tensor ds -> MTensor ds
 unsafeThaw (Tensor mem) = MTensor mem
 
 freeze :: (MonadIO m) => MTensor ds -> m (Tensor ds)
-freeze (MTensor mem) = Tensor <$> Buffer.clone mem
+freeze (MTensor mem) = Tensor <$> MemSub.clone mem
 
 thaw :: (MonadIO m) => Tensor ds -> m (MTensor ds)
-thaw (Tensor mem) = MTensor <$> Buffer.clone mem
+thaw (Tensor mem) = MTensor <$> MemSub.clone mem
 
 fromList :: forall ds m. (MonadIO m, KnownDims ds) => [Double] -> m (Tensor ds)
 fromList xs = do when (n /= length xs) $ liftIO $ do
                    throwIO (IndexOutOfBounds "Tensor.fromList")
-                 Tensor <$> Buffer.fromList xs
+                 Tensor <$> MemSub.fromList xs
   where
     n = dimSize (Proxy @ ds)
 
 toList :: (MonadIO m) => Tensor ds -> m [Double]
-toList (Tensor mem) = Buffer.toList mem
+toList (Tensor mem) = MemSub.toList mem
 
 fromVector :: forall ds m. (MonadIO m, KnownDims ds) => S.Vector Double -> m (Tensor ds)
 fromVector xs = do when (n /= V.length xs) $ liftIO $ do
                      throwIO (IndexOutOfBounds "Tensor.fromVector")
-                   Tensor <$> Buffer.fromVector xs
+                   Tensor <$> MemSub.fromVector xs
   where
     n = dimSize (Proxy @ ds)
 
 toVector :: (MonadIO m) => Tensor ds -> m (S.Vector Double)
-toVector (Tensor mem) = Buffer.toVector mem
+toVector (Tensor mem) = MemSub.toVector mem
 
 fromBlob :: Blob Double (Prod ds) -> Tensor ds
-fromBlob (Blob mem) = Tensor mem
+fromBlob (Blob buf) = Tensor (unsafePerformIO $ Buffer.toMemSub buf)
 
 toBlob :: Tensor ds -> Blob Double (Prod ds)
-toBlob (Tensor mem) = Blob mem
+toBlob (Tensor mem) = Blob (Buffer.fromMemSub mem)
 
 copyInto :: forall ds m. (MonadIO m, KnownDims ds) => Tensor ds -> MTensor ds -> m ()
-copyInto (Tensor src) (MTensor dst) = Buffer.copy src dst 0 0 (dimSize (Proxy @ ds))
+copyInto (Tensor src) (MTensor dst) = MemSub.copyInto src dst 0 0 (dimSize (Proxy @ ds))
 
 replicate :: forall ds m. (MonadIO m, KnownDims ds) => Double -> m (Tensor ds)
 replicate x = fromVector (S.replicate n x)
   where
     n = dimSize (Proxy @ ds)
 
+split :: forall a b. (KnownNat a, KnownNat b)
+      => Tensor '[a+b] -> (Tensor '[a], Tensor '[b])
+split (Tensor buf) = (Tensor (MemSub.slice 0 a buf),
+                      Tensor (MemSub.slice a b buf))
+  where
+    [a,b] = dimVal (Proxy @ '[a,b])
+
+append :: Tensor '[a] -> Tensor '[b] -> Tensor '[a+b]
+append (Tensor one) (Tensor two) = Tensor (unsafePerformIO $ MemSub.concatenate [one, two])
+
 -- Arithmetic operations --
 
 reshape :: (Prod ds ~ Prod es) => Tensor ds -> Tensor es
 reshape (Tensor buffer) = Tensor buffer
+
+reshapeM :: (Prod ds ~ Prod es) => MTensor ds -> MTensor es
+reshapeM (MTensor buffer) = MTensor buffer
 
 data KName = Add
            | Sub
@@ -194,11 +215,17 @@ scaleTensor a xs = do ys <- new
 addTensor :: forall ds m. (MonadIO m, KnownDims ds) => Tensor ds -> Tensor ds -> m (Tensor ds)
 addTensor = zipWithTensor memoTable Add (+)
 
+addIntoSrc :: KernelProgram '[TensorCL '[n],
+                              MTensorCL '[n]]
+addIntoSrc = compile $ \input output -> do
+  i <- get_global_id 0
+  output![i] .= output![i] + input![i]
+
 addTensors :: forall ds m. (MonadIO m, KnownDims ds) => [Tensor ds] -> m (Tensor ds)
-addTensors xss = do mem <- zero
-                    for_ xss $ \(Tensor xs) -> do
-                      Buffer.addInto xs (getTensor mem)
-                    return mem
+addTensors xss = do out <- unsafeThaw <$> zero
+                    for_ xss $ \xs -> do
+                      liftIO (clfun addIntoSrc [dimSize out] (reshape xs) (reshapeM out) :: IO ())
+                    return (unsafeFreeze out)
 
 subTensor :: forall ds m. (MonadIO m, KnownDims ds) => Tensor ds -> Tensor ds -> m (Tensor ds)
 subTensor = zipWithTensor memoTable Sub (-)
@@ -268,14 +295,11 @@ zipWithTensorM table k f = go
     shape :: [Int]
     shape = [dimSize (Proxy @ ds)]
 
+instance (MonadIO m, KnownDims ds) => AdamOps m (Tensor ds) where
+  adam_pure_d = replicate
+  adam_square_d = squareTensor
+  adam_sqrt_d = sqrtTensor
+  adam_divide_d = divTensor
 
--- adamTensor :: forall (n :: Nat) m a. (MonadIO m, KnownNat n, CLFloating a, Floats a) => AdamConfig m (Tensor a n) (Tensor a n)
--- adamTensor = defaultAdam {
---   adam_pure_d = pureTensor,
---   adam_scale_d = scale,
---   adam_add_d = plus,
---   adam_square_d = squareTensor,
---   adam_sqrt_d = sqrtTensor,
---   adam_divide_d = divideTensor,
---   adam_update_p = plus
---   }
+instance (MonadIO m, KnownDims ds) => Adam m (Tensor ds) (Tensor ds) where
+  adam_update_p = plus

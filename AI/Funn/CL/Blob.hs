@@ -146,7 +146,7 @@ createCopy src = do dst <- createBlob
                     return dst
 
 copy :: forall n a m. (MonadIO m, Storable a, KnownNat n) => Blob a n -> MBlob a n -> m ()
-copy (Blob src) (Blob dst) = Buffer.copy src dst 0 0 len
+copy (Blob src) (Blob dst) = Buffer.copyInto src dst 0 0 len
   where
     len = fromIntegral $ natVal (Proxy :: Proxy n)
 
@@ -212,8 +212,8 @@ squareBlob = mapBlob' memoTable (Square (precision @a)) (^2)
 sqrtBlob :: forall n m a. (MonadIO m, KnownNat n, CLFloats a) => Blob a n -> m (Blob a n)
 sqrtBlob = mapBlob' memoTable (Sqrt (precision @a)) sqrt
 
-catBlob :: forall α β m a q. (MonadIO m, KnownNat α, KnownNat β, Storable a) => BlobT q a α -> BlobT q a β -> m (BlobT q a (α + β))
-catBlob (Blob xs) (Blob ys) = Blob <$> Buffer.concat [xs, ys]
+catBlob :: forall α β a q. (KnownNat α, KnownNat β, Storable a) => BlobT q a α -> BlobT q a β -> BlobT q a (α + β)
+catBlob (Blob xs) (Blob ys) = Blob (Buffer.concat [xs, ys])
 
 splitBlob :: forall α β a q. (KnownNat α, KnownNat β) => BlobT q a (α + β) -> (BlobT q a α, BlobT q a β)
 splitBlob (Blob xs) = (Blob ys, Blob zs)

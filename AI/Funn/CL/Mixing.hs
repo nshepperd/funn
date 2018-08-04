@@ -58,7 +58,7 @@ traverseBack_ f = forwards . traverse_ (Backwards . f)
 resize :: (MonadIO m, Floats t, KnownNat a, KnownNat b) => Blob t a -> m (Blob t b)
 resize (Blob as) = do
   out@(Blob bs) <- pureBlob 0
-  Buffer.copy as bs 0 0 (min (Buffer.size as) (Buffer.size bs))
+  Buffer.copyInto as bs 0 0 (min (Buffer.size as) (Buffer.size bs))
   Blob.unsafeFreeze out
 
 type MixParams' k d = k * (2^d) * d
@@ -80,7 +80,7 @@ amixDiff proxy = Diff run
     backward k d_output = do
       d_output_fit <- resize d_output
       (dsub_par, d_input_fit) <- k d_output_fit
-      d_pars <- catBlob dsub_par d_output
+      let d_pars = catBlob dsub_par d_output
       d_input <- resize d_input_fit
       return (d_pars, d_input)
 

@@ -225,12 +225,11 @@ splitDiff :: forall α β a m. (MonadIO m, KnownNat α, KnownNat β, CLFloats a)
 splitDiff = Diff run
   where
     run ab = pure (splitBlob ab, backward)
-    backward (da, db) = catBlob da db
+    backward (da, db) = pure (catBlob da db)
 
 mergeDiff :: forall α β a m. (MonadIO m, KnownNat α, KnownNat β, CLFloats a) =>
              Diff m (Blob a α, Blob a β) (Blob a (α + β))
 mergeDiff = Diff run
   where
-    run (a,b) = do ab <- catBlob a b
-                   pure (ab, backward)
+    run (a,b) = pure (catBlob a b, backward)
     backward dab = pure (splitBlob dab)

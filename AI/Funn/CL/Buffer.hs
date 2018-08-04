@@ -6,8 +6,8 @@ module AI.Funn.CL.Buffer (
   Buffer, malloc, arg,
   fromVector, toVector,
   fromList, toList, size,
-  slice, concat, clone, copy,
-  addInto
+  slice, concat, clone, copyInto,
+  addInto, fromMemSub, toMemSub
   ) where
 
 import           Prelude hiding (concat)
@@ -31,91 +31,90 @@ import           AI.Funn.CL.DSL.Array
 import           AI.Funn.CL.Function
 import           AI.Funn.CL.MemSub (MemSub)
 import qualified AI.Funn.CL.MemSub as MemSub
+import           AI.Funn.CL.LazyMem (LazyMem)
+import qualified AI.Funn.CL.LazyMem as LazyMem
 import           AI.Funn.CL.MonadCL
-import           AI.Funn.CL.Tree (Tree)
-import qualified AI.Funn.CL.Tree as Tree
 import           AI.Funn.Space
 
-data Buffer a = Buffer (IORef (Tree (MemSub a)))
+newtype Buffer a = Buffer (IORef (LazyMem a))
 
 malloc :: (MonadIO m, Storable a) => Int -> m (Buffer a)
-malloc n = Tree.malloc n >>= fromTree
+malloc n = fromMemSub <$> MemSub.malloc n
 
--- free :: MonadIO m => Buffer a -> m ()
--- free (Buffer mem _ _) = Mem.free mem
+fromLazyMem :: LazyMem a -> Buffer a
+fromLazyMem mem = unsafePerformIO (Buffer <$> newIORef mem)
 
-fromTree :: MonadIO m => Tree (MemSub a) -> m (Buffer a)
-fromTree tree = Buffer <$> liftIO (newIORef tree)
+toLazyMem :: MonadIO m => Buffer a -> m (LazyMem a)
+toLazyMem (Buffer ioref) = liftIO (readIORef ioref)
 
-getTree :: MonadIO m => Buffer a -> m (Tree (MemSub a))
-getTree (Buffer ioref) = liftIO (readIORef ioref)
+fromMemSub :: MemSub a -> Buffer a
+fromMemSub mem = fromLazyMem (LazyMem.fromStrict mem)
 
-compact :: (HasCallStack, Storable a) => Buffer a -> MemSub a
-compact (Buffer ioref) = unsafePerformIO $ do
-  tree <- readIORef ioref
-  case Tree.downFree tree of
+toMemSub :: (MonadIO m, Storable a) => Buffer a -> m (MemSub a)
+toMemSub (Buffer ioref) = liftIO $ do
+  lm <- readIORef ioref
+  case LazyMem.toStrictFree lm of
     Just mem -> return mem
-    Nothing  -> do mem <- Tree.down tree
-                   -- putStrLn $ "compacting " ++ Tree.treeShow tree
-                   -- putStrLn $ "at " ++ prettyCallStack callStack
-                   writeIORef ioref (Tree.up mem)
-                   return mem
+    Nothing -> do
+      mem <- LazyMem.toStrict lm
+      writeIORef ioref (LazyMem.fromStrict mem)
+      return mem
 
-arg :: (HasCallStack, Storable a) => Buffer a -> KernelArg
-arg buffer = MemSub.arg (compact buffer)
+arg :: (Storable a) => Buffer a -> KernelArg
+arg buffer = MemSub.arg (unsafePerformIO $ toMemSub buffer)
 
 -- O(1)
 size :: Buffer a -> Int
-size buffer = unsafePerformIO (Tree.size <$> getTree buffer)
+size buffer = unsafePerformIO (LazyMem.size <$> toLazyMem buffer)
 
--- O(n)
+-- O(size)
 fromVector :: (MonadIO m, Storable a) => S.Vector a -> m (Buffer a)
-fromVector xs = fromTree . Tree.up =<< MemSub.fromVector xs
+fromVector xs = fromMemSub <$> MemSub.fromVector xs
 
 fromList :: (MonadIO m, Storable a) => [a] -> m (Buffer a)
-fromList xs = fromTree . Tree.up =<< MemSub.fromList xs
+fromList xs = fromMemSub <$> MemSub.fromList xs
 
--- O(n)
+-- O(size)
 toVector :: (MonadIO m, Storable a) => Buffer a -> m (S.Vector a)
-toVector buffer = MemSub.toVector (compact buffer)
+toVector buffer = toMemSub buffer >>= MemSub.toVector
 
 toList :: (MonadIO m, Storable a) => Buffer a -> m [a]
-toList buffer = MemSub.toList (compact buffer)
+toList buffer = toMemSub buffer >>= MemSub.toList
 
 -- O(1)
 slice :: Int -> Int -> Buffer a -> Buffer a
-slice offset size buffer = unsafePerformIO $ do
-  tree <- getTree buffer
-  fromTree (Tree.slice offset size tree)
+slice offset len buffer = unsafePerformIO $ do
+  lm <- toLazyMem buffer
+  return (fromLazyMem (LazyMem.slice offset len lm))
 
 clone :: (MonadIO m, Storable a) => (Buffer a) -> m (Buffer a)
 clone buffer = do
-  tree <- getTree buffer
-  tree' <- Tree.clone tree
-  fromTree tree'
+  lm <- toLazyMem buffer
+  fromLazyMem <$> LazyMem.clone lm
 
 -- O(n)
-concat :: (MonadIO m, Storable a) => [Buffer a] -> m (Buffer a)
-concat xs = do
-  trees <- traverse getTree xs
-  tree <- Tree.concatenate trees
-  fromTree tree
+concat :: [Buffer a] -> Buffer a
+concat xs = unsafePerformIO $ do
+  lms <- traverse toLazyMem xs
+  return (fromLazyMem (fold lms))
 
-copy :: (MonadIO m, Storable a) => Buffer a -> Buffer a -> Int -> Int -> Int -> m ()
-copy src dst srcOffset dstOffset len = do
-  srcTree <- getTree src
-  dstTree <- getTree dst
-  Tree.copyInto srcTree dstTree srcOffset dstOffset len
+copyInto :: (MonadIO m, Storable a) => Buffer a -> Buffer a -> Int -> Int -> Int -> m ()
+copyInto src dst srcOffset dstOffset len = do
+  srcSub <- toMemSub src
+  dstSub <- toMemSub dst
+  MemSub.copyInto srcSub dstSub srcOffset dstOffset len
 
 memoTable :: KTable Precision
 memoTable = newKTable unsafePerformIO
 
 addInto :: (MonadIO m, CLFloats a) => Buffer a -> Buffer a -> m ()
 addInto src dst = do
-  srcTree <- getTree src
-  let dstSub = compact dst
-  traverse_ (go dstSub) (Tree.treePieces srcTree)
+  srcLM <- toLazyMem src
+  dstSub <- toMemSub dst
+  traverse_ (go dstSub) (parts 0 $ LazyMem.toChunks srcLM)
   where
+    parts n [] = []
+    parts n (sub:xs) = (n,sub) : parts (n + MemSub.size sub) xs
     go dstSub (offset, src) = addMemInto src (MemSub.slice offset (MemSub.size src) dstSub)
 
 addMemInto :: forall a m. (MonadIO m, CLFloats a) => MemSub a -> MemSub a -> m ()

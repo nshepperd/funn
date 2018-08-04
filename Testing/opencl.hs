@@ -124,7 +124,7 @@ prop_Buffer_concat = monadic clProperty $ do
   buf1 <- lift $ Buffer.fromList xs
   buf2 <- lift $ Buffer.fromList ys
   buf3 <- lift $ Buffer.fromList zs
-  buf <- lift $ Buffer.toList =<< Buffer.concat [buf1, buf2, buf3]
+  buf <- lift $ Buffer.toList (Buffer.concat [buf1, buf2, buf3])
   assert (buf == xs ++ ys ++ zs)
 
 prop_Buffer_slice :: Property
@@ -190,7 +190,7 @@ prop_Blob_split :: Property
 prop_Blob_split = monadic clProperty $ do
   zs <- pickBlob @9
   let (x1, y1) = Blob.splitBlob @2 @7 zs
-  z1 <- lift (Blob.catBlob x1 y1)
+  let z1 = Blob.catBlob x1 y1
   assertEqual zs z1
 
 -- Tensor properties.
