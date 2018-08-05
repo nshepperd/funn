@@ -5,6 +5,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -23,6 +24,7 @@ import           Data.Foldable
 import           Data.List
 import           Data.Monoid
 import           Data.Proxy
+import           Data.Random
 import           Data.Traversable
 import           GHC.TypeLits
 
@@ -32,9 +34,11 @@ import           AI.Funn.CL.DSL.Code as C
 import           AI.Funn.CL.DSL.Tensor
 import           AI.Funn.CL.Function
 import           AI.Funn.CL.MonadCL
+import           AI.Funn.CL.Network
 import           AI.Funn.CL.Tensor (Tensor, MTensor)
 import qualified AI.Funn.CL.Tensor as Tensor
 import           AI.Funn.Diff.Diff (Derivable(..), Diff(..))
+import qualified AI.Funn.Flat.Blob as Blob
 import           AI.Funn.Space
 import           AI.Funn.TypeLits
 
@@ -150,9 +154,19 @@ conv2dDiff _ = Diff run
 
     pad = fromIntegral (natVal (Proxy @ pad)) :: Int
 
-conv3x3Diff :: forall w h c1 c2 m.
-               (MonadIO m, KnownDimsF [w, h, c1, c2], 3 <= w, 3 <= h)
-            => Diff m
-               (Tensor [3, 3, c1, c2], Tensor [w, h, c1])
-               (Tensor [w, h, c2])
-conv3x3Diff = conv2dDiff (Proxy @ 1)
+conv2d :: forall k pad iw ih c1 c2 m proxy.
+          (MonadIO m, KnownDimsF [k, pad, iw, ih, c1, c2], (1 <= k), k <= iw, k <= ih)
+       => proxy pad
+       -> Network m _ (Tensor [iw, ih, c1]) (Tensor [iw + 2 * pad - k + 1,
+                                                     ih + 2 * pad - k + 1,
+                                                     c2])
+conv2d _ = network (conv2dDiff (Proxy @ pad)) init
+  where
+    init = Blob.generate (normal 0 (1 / sqrt d))
+    d = k * k * sqrt (c1 * c2)
+    [k, c1, c2] = map fromIntegral (dimVal (Proxy @[k, c1, c2]))
+
+conv3x3 :: forall w h c1 c2 m.
+           (MonadIO m, KnownDimsF [w, h, c1, c2], 3 <= w, 3 <= h)
+        => Network m _ (Tensor [w, h, c1]) (Tensor [w, h, c2])
+conv3x3 = conv2d @3 @1 Proxy

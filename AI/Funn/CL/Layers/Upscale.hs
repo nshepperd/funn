@@ -32,6 +32,7 @@ import           AI.Funn.CL.DSL.Code as C
 import           AI.Funn.CL.DSL.Tensor
 import           AI.Funn.CL.Function
 import           AI.Funn.CL.MonadCL
+import           AI.Funn.CL.Network
 import           AI.Funn.CL.Tensor (Tensor, MTensor)
 import qualified AI.Funn.CL.Tensor as Tensor
 import           AI.Funn.Diff.Diff (Derivable(..), Diff(..))
@@ -73,3 +74,7 @@ doubleDiff = Diff run
       d_input <- Tensor.new
       liftIO (clfun doubleBackward (dimVal d_input) d_input d_output :: IO ())
       return (Tensor.unsafeFreeze d_input)
+
+doubleNet :: (MonadIO m, KnownDimsF [w, h, c])
+          => Network m 0 (Tensor [w, h, c]) (Tensor [2*w, 2*h, c])
+doubleNet = liftDiff doubleDiff

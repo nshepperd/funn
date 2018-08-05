@@ -14,7 +14,8 @@ module AI.Funn.CL.TensorLazy (
   -- Core
   fromStrict,
   toStrict,
-  append
+  append,
+  nul
   ) where
 
 
@@ -76,3 +77,6 @@ toStrict (Tensor buf) = T.Tensor (unsafePerformIO $ LazyMem.toStrict buf)
 -- O(1)
 append :: Tensor '[a] -> Tensor '[b] -> Tensor '[a+b]
 append (Tensor one) (Tensor two) = Tensor (LazyMem.append one two)
+
+nul :: Tensor '[0]
+nul = Tensor mempty

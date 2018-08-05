@@ -2,8 +2,5 @@ include_rules
 
 run $(HCC) ./*.hs
 
-LIBS = AI/Funn/*.o AI/Funn/Optimizer/*.o AI/Funn/Diff/*.o AI/Funn/Network/*.o AI/Funn/Flat/*.o AI/Funn/CL/*.o AI/Funn/CL/DSL/*.o c/*.o
-PROF_LIBS = AI/Funn/*.p_o AI/Funn/Optimizer/*.p_o AI/Funn/Diff/*.p_o AI/Funn/Network/*.p_o AI/Funn/Flat/*.p_o AI/Funn/CL/*.p_o AI/Funn/CL/DSL/*.p_o c/*.o
-
 : foreach *.o | $(LIBS) |> !ghc $(LIBS) |> %B
 : foreach *.p_o | $(PROF_LIBS) |> !ghc -prof $(PROF_LIBS) |> %B_p

@@ -36,6 +36,7 @@ import qualified AI.Funn.CL.LazyMem as LazyMem
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.Space
 
+-- Mutable buffer backed by LazyMem that compacts itself on demand.
 newtype Buffer a = Buffer (IORef (LazyMem a))
 
 malloc :: (MonadIO m, Storable a) => Int -> m (Buffer a)

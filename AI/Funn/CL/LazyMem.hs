@@ -16,6 +16,8 @@ import           System.IO.Unsafe
 import           AI.Funn.CL.MemSub (MemSub)
 import qualified AI.Funn.CL.MemSub as MemSub
 
+-- Mutable buffer backed by MemSub with fast append.
+-- Essentially equivalent to a list of MemSub.
 data LazyMem a = Empty
                | Leaf {-# UNPACK #-} !Int (MemSub a)
                | Node {-# UNPACK #-} !Int (LazyMem a) (LazyMem a)
@@ -41,6 +43,7 @@ toStrict (Node n l r)
   | otherwise    =  compact (Node n l r)
 
 -- O(1)
+-- Convert to MemSub iff doing so is zero-copy.
 toStrictFree :: LazyMem a -> Maybe (MemSub a)
 toStrictFree Empty = Nothing
 toStrictFree (Leaf n mem) = Just mem
@@ -57,6 +60,7 @@ toChunks (Node n l r) = toChunks l ++ toChunks r
 
 -- O(size)
 clone :: (MonadIO m, Storable a) => LazyMem a -> m (LazyMem a)
+clone Empty = pure Empty
 clone mem = fromStrict <$> compact mem
 
 -- O(size)

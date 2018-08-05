@@ -9,5 +9,26 @@ GHC_LDFLAGS=-package vector -package random-fu -package reinterpret-cast -packag
 
  # vector random-fu reinterpret-cast hmatrix optparse-applicative criterion constraints binary-search clock lens ghc-typelits-knownnat hopencl QuickCheck
 
+LIBS = $(HSROOT)/AI/Funn/*.o
+LIBS += $(HSROOT)/AI/Funn/CL/*.o
+LIBS += $(HSROOT)/AI/Funn/CL/DSL/*.o
+LIBS += $(HSROOT)/AI/Funn/CL/Layers/*.o
+LIBS += $(HSROOT)/AI/Funn/Diff/*.o
+LIBS += $(HSROOT)/AI/Funn/Flat/*.o
+LIBS += $(HSROOT)/AI/Funn/Indexed/*.o
+LIBS += $(HSROOT)/AI/Funn/Network/*.o
+LIBS += $(HSROOT)/AI/Funn/Optimizer/*.o
+LIBS += $(HSROOT)/c/*.o
+PROF_LIBS = $(HSROOT)/AI/Funn/*.p_o
+PROF_LIBS += $(HSROOT)/AI/Funn/CL/*.p_o
+PROF_LIBS += $(HSROOT)/AI/Funn/CL/DSL/*.p_o
+PROF_LIBS += $(HSROOT)/AI/Funn/CL/Layers/*.o
+PROF_LIBS += $(HSROOT)/AI/Funn/Diff/*.p_o
+PROF_LIBS += $(HSROOT)/AI/Funn/Flat/*.p_o
+PROF_LIBS += $(HSROOT)/AI/Funn/Indexed/*.p_o
+PROF_LIBS += $(HSROOT)/AI/Funn/Network/*.p_o
+PROF_LIBS += $(HSROOT)/AI/Funn/Optimizer/*.p_o
+PROF_LIBS += $(HSROOT)/c/*.o
+
 include script/rules
 .gitignore
