@@ -308,6 +308,7 @@ class MinMax a where
   fmax :: Expr a -> Expr a -> Expr a
 
 class MinMax a => Relational a where
+  -- fstep edge x = if x > edge then 1 else 0
   fstep :: Expr a -> Expr a -> Expr a
 
 instance MinMax Float where

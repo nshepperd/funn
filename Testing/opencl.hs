@@ -297,6 +297,7 @@ prop_conv2d = checkGradientCL (conv2dDiff @3 @1 @3 @3 @2 @2 @IO Proxy)
 prop_doubleDiff :: Property
 prop_doubleDiff = checkGradientCL (doubleDiff @2 @2 @2)
 
+
 -- Tensor Net gradient
 
 prop_conv2d_net :: Property
@@ -307,6 +308,9 @@ prop_fc_net = checkGradientNet (fcNet @3 @3)
 
 prop_quadcost_net :: Property
 prop_quadcost_net = checkGradientNet (quadCostNet @[3,4])
+
+prop_prelu_net :: Property
+prop_prelu_net = checkGradientNet (preluNet @'[3])
 
 -- Equality
 

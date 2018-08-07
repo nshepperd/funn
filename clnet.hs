@@ -64,18 +64,12 @@ mainNetwork = fcNet ~>> sigmoidNet ~>> (fixSize @3) ~>> fcNet
 evalNetwork :: Network IO _ (Tensor '[2], Tensor '[1]) Double
 evalNetwork = first mainNetwork ~>> quadCostNet
 
-train :: Tensor _ -> IO ()
-train initialPar = do
-    pairs <- traverse (\(a,b) -> (,) <$> Tensor.fromList a <*> Tensor.fromList b) [
-      ([0, 0], [0]),
-      ([0, 1], [1]),
-      ([1, 0], [1]),
-      ([1, 1], [0])] :: IO [(Tensor '[2], Tensor '[1])]
-
+train :: Tensor _ -> IO (Tensor '[2], Tensor '[1]) -> IO ()
+train initialPar dataset = do
     let
       evalDiff = toDiff evalNetwork
       objective par = do
-        pair <- sample (randomElement pairs)
+        pair <- dataset
         (o, k) <- runDiff evalDiff (par, pair)
         (dpar, _) <- k 1
         return (o, dpar)
@@ -99,4 +93,11 @@ main = do
 
   initial_par_blob <- sample (netInit mainNetwork)
   initial_par <- fromFlat initial_par_blob
-  train initial_par
+
+  pairs <- traverse (\(a,b) -> (,) <$> Tensor.fromList a <*> Tensor.fromList b) [
+    ([0, 0], [0]),
+    ([0, 1], [1]),
+    ([1, 0], [1]),
+    ([1, 1], [0])] :: IO [(Tensor '[2], Tensor '[1])]
+
+  train initial_par (sample (randomElement pairs))

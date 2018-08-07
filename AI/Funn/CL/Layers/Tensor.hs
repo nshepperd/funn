@@ -7,7 +7,7 @@
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=20 #-}
-module AI.Funn.CL.Layers.Tensor (reluNet, sigmoidNet, biasNet, quadCostNet, reshapeNet) where
+module AI.Funn.CL.Layers.Tensor (reluNet, sigmoidNet, biasNet, preluNet, quadCostNet, reshapeNet) where
 
 import           Control.Monad
 import           Control.Monad.IO.Class
@@ -29,6 +29,7 @@ import           AI.Funn.CL.Tensor (Tensor(..), MTensor(..))
 import qualified AI.Funn.CL.Tensor as Tensor
 import           AI.Funn.Diff.Diff (Derivable(..), Diff(..))
 import qualified AI.Funn.Diff.Diff as Diff
+import qualified AI.Funn.Flat.Blob as Blob
 import           AI.Funn.Space
 import           AI.Funn.TypeLits
 
@@ -131,6 +132,62 @@ biasDiff = Diff run
 biasNet :: forall ds m. (MonadIO m, KnownDims ds)
          => Network m (Prod ds) (Tensor ds) (Tensor ds)
 biasNet = network biasDiff zero
+
+-- Parametric Relu
+
+{-# NOINLINE preluForward #-}
+preluForward :: KernelProgram '[TensorCL '[n], TensorCL '[n], MTensorCL '[n]]
+preluForward = compile $ \rs xs ys -> do
+  i <- get_global_id 0
+  let
+    r = rs![i]
+    x = xs![i]
+  ys![i] .= x * (r + (1 - r) * fstep 0 x)
+
+{-# NOINLINE preluBackward #-}
+preluBackward :: KernelProgram '[TensorCL '[n], TensorCL '[n], TensorCL '[n], MTensorCL '[n]]
+preluBackward = compile $ \rs xs dys dxs -> do
+  i <- get_global_id 0
+  let
+    r = rs![i]
+    x = xs![i]
+    dy = dys![i]
+  dxs![i] .= dy * (r + (1 - r) * fstep 0 x)
+
+{-# NOINLINE preluBackpar #-}
+preluBackpar :: KernelProgram '[TensorCL '[n], TensorCL '[n], MTensorCL '[n]]
+preluBackpar = compile $ \xs dys drs -> do
+  i <- get_global_id 0
+  let
+    x = xs![i]
+    dy = dys![i]
+  drs![i] .= dy * fmin 0 x
+
+preluNet :: forall ds m. (MonadIO m, KnownDims ds)
+         => Network m (Prod ds) (Tensor ds) (Tensor ds)
+preluNet = network (Diff run) (Blob.generate (pure 1))
+  where
+    run (rs, xs) = do
+      ys <- Tensor.new
+      liftIO (clfun preluForward [dimSize ys]
+              rs
+              (Tensor.reshape xs)
+              (Tensor.reshapeM ys) :: IO ())
+      return (Tensor.unsafeFreeze ys, backward rs xs)
+    backward rs xs dys = do
+      dxs <- Tensor.new
+      liftIO (clfun preluBackward [dimSize dxs]
+              rs
+              (Tensor.reshape xs)
+              (Tensor.reshape dys)
+              (Tensor.reshapeM dxs) :: IO ())
+      drs <- Tensor.new
+      liftIO (clfun preluBackpar [dimSize drs]
+              (Tensor.reshape xs)
+              (Tensor.reshape dys)
+              drs :: IO ())
+      return (Tensor.unsafeFreeze drs, Tensor.unsafeFreeze dxs)
+
 
 -- Quadratic Cost
 
