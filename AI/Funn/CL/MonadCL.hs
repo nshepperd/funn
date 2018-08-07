@@ -11,7 +11,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 module AI.Funn.CL.MonadCL (
   initOpenCL, getPlatformID, getContext, getDeviceID, getCommandQueue,
-  KernelArg(..), doubleArg, int32Arg, runKernel, runCompiled
+  KernelArg(..), doubleArg, int32Arg, runKernel, runCompiled, tracingArg
   ) where
 
 import           Control.Applicative
@@ -120,6 +120,9 @@ instance Monoid KernelArg where
   mappend (KernelArg f1) (KernelArg f2) = KernelArg $ \k ->
     f1 (\args1 ->
           f2 (\args2 -> k (args1 ++ args2)))
+
+tracingArg :: Show a => a -> KernelArg -> KernelArg
+tracingArg a (KernelArg f) = KernelArg (\k -> putStrLn ("tracingArg: " ++ show a) >> f k)
 
 doubleArg :: Double -> KernelArg
 doubleArg x = KernelArg run

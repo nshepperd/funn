@@ -26,6 +26,7 @@ import           Data.Monoid
 import           Data.Proxy
 import           Data.Random
 import           Data.Traversable
+import           GHC.Stack
 import           GHC.TypeLits
 
 import qualified AI.Funn.CL.DSL.AST as AST
@@ -33,6 +34,7 @@ import           AI.Funn.CL.DSL.Array
 import           AI.Funn.CL.DSL.Code as C
 import           AI.Funn.CL.DSL.Tensor
 import           AI.Funn.CL.Function
+import           AI.Funn.CL.Layers.Tensor
 import           AI.Funn.CL.MonadCL
 import           AI.Funn.CL.Network
 import           AI.Funn.CL.Tensor (Tensor, MTensor)
@@ -154,13 +156,14 @@ conv2dDiff _ = Diff run
 
     pad = fromIntegral (natVal (Proxy @ pad)) :: Int
 
+-- Adds bias.
 conv2d :: forall k pad iw ih c1 c2 m proxy.
           (MonadIO m, KnownDimsF [k, pad, iw, ih, c1, c2], (1 <= k), k <= iw, k <= ih)
        => proxy pad
        -> Network m _ (Tensor [iw, ih, c1]) (Tensor [iw + 2 * pad - k + 1,
                                                      ih + 2 * pad - k + 1,
                                                      c2])
-conv2d _ = network (conv2dDiff (Proxy @ pad)) init
+conv2d _ = network (conv2dDiff (Proxy @ pad)) init ~>> biasNet
   where
     init = Blob.generate (normal 0 (1 / sqrt d))
     d = k * k * sqrt (c1 * c2)

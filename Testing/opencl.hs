@@ -32,10 +32,13 @@ import qualified AI.Funn.CL.Buffer as Buffer
 import           AI.Funn.CL.Flat
 import           AI.Funn.CL.LSTM
 import           AI.Funn.CL.Layers.Convolution
+import           AI.Funn.CL.Layers.FullyConnected
 import           AI.Funn.CL.Layers.Misc
+import           AI.Funn.CL.Layers.Tensor
 import           AI.Funn.CL.Layers.Upscale
 import           AI.Funn.CL.Mixing
 import           AI.Funn.CL.MonadCL
+import           AI.Funn.CL.Network
 import           AI.Funn.CL.Tensor (Tensor)
 import qualified AI.Funn.CL.Tensor as Tensor
 import           AI.Funn.Diff.Diff (Diff(..), Derivable(..), runDiffForward)
@@ -66,6 +69,12 @@ checkSameCL :: (Loadable a n1, D a ~ a,
 checkSameCL diff1 diff2 = (checkSame clProperty
                            (fromCPUDiff >>> diff1 >>> fromGPUDiff)
                            (fromCPUDiff >>> diff2 >>> fromGPUDiff))
+
+checkGradientNet :: (Loadable a n1, D a ~ a,
+                     Loadable b n2, D b ~ b,
+                     KnownNat p)
+                 => Network IO p a b -> Property
+checkGradientNet net = checkGradientCL (toDiff net)
 
 fromCPUDiff :: (Loadable a n, Loadable (D a) n) => Diff (IO) (C.Blob n) a
 fromCPUDiff = Diff run
@@ -277,6 +286,8 @@ prop_mixdiff = checkGradientCL (amixDiff @3 @2 @2 @Double Proxy)
 prop_softmaxcost :: Property
 prop_softmaxcost = checkGradientCL (putR 0 >>> softmaxCost @3 @IO @Double)
 
+-- Tensor gradient
+
 prop_iconv2d :: Property
 prop_iconv2d = checkGradientCL (iconv2dDiff @2 @3 @3 @2 @2 @IO)
 
@@ -285,6 +296,17 @@ prop_conv2d = checkGradientCL (conv2dDiff @3 @1 @3 @3 @2 @2 @IO Proxy)
 
 prop_doubleDiff :: Property
 prop_doubleDiff = checkGradientCL (doubleDiff @2 @2 @2)
+
+-- Tensor Net gradient
+
+prop_conv2d_net :: Property
+prop_conv2d_net = checkGradientNet (conv2d @3 @1 @3 @3 @2 @2 Proxy)
+
+prop_fc_net :: Property
+prop_fc_net = checkGradientNet (fcNet @3 @3)
+
+prop_quadcost_net :: Property
+prop_quadcost_net = checkGradientNet (quadCostNet @[3,4])
 
 -- Equality
 

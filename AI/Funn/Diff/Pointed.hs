@@ -136,6 +136,31 @@ runPointed f = Diff run
       let Just a = readMapD ra dvsa
       return a
 
+-- class Pac m s r a | r -> a, a -> r, a -> s, r -> s where
+--   pac :: a -> Pointed m s r
+--   unpac :: r -> Pointed m s a
+
+-- data XYZ = XYZ
+
+-- instance Pac m s (Ref s XYZ) (Ref s XYZ) where
+--   pac = pure
+--   unpac = pure
+
+-- instance (Monad m, f ~ Ref s,
+--           Affine m r, Affine m t,
+--           Pac m s (Ref s r) a,
+--           Pac m s (Ref s t) b) =>
+--          Pac m s (f (r,t)) (a,b) where
+--   pac (r, t) = do ra <- pac r
+--                   rb <- pac t
+--                   pack2 (ra, rb)
+--   unpac ref_ab = do (ra, rb) <- unpack2 ref_ab
+--                     r <- unpac ra
+--                     t <- unpac rb
+--                     return (r, t)
+
+
+
 data Pack m s r a where
   (:%:) :: (Affine m a, Affine m b) => Ref s a -> Ref s b -> Pack m s (a, b) (Ref s a, Ref s b)
   (:<:) :: (Affine m a, Affine m t) => Ref s a -> Pack m s t b -> Pack m s (a, t) (Ref s a, b)

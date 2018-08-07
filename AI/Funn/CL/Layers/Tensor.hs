@@ -7,7 +7,7 @@
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=20 #-}
-module AI.Funn.CL.Layers.Tensor where
+module AI.Funn.CL.Layers.Tensor (reluNet, sigmoidNet, biasNet, quadCostNet) where
 
 import           Control.Monad
 import           Control.Monad.IO.Class
@@ -131,3 +131,19 @@ biasDiff = Diff run
 biasNet :: forall ds m. (MonadIO m, KnownDims ds)
          => Network m (Prod ds) (Tensor ds) (Tensor ds)
 biasNet = network biasDiff zero
+
+-- Quadratic Cost
+
+quadCostNet :: forall ds m. (MonadIO m, KnownDims ds)
+            => Network m 0 (Tensor ds, Tensor ds) Double
+quadCostNet = liftDiff (Diff run)
+  where
+    run (xs, ys) = do
+      diff <- Tensor.subTensor xs ys
+      diff2 <- Tensor.squareTensor diff
+      o <- sum <$> Tensor.toList diff2
+      return (o, backward diff)
+    backward diff d = do
+      dxs <- scale (2*d) diff
+      dys <- scale (-2*d) diff
+      return (dxs, dys)

@@ -39,6 +39,7 @@ module AI.Funn.CL.Tensor (
   subTensor,
   mulTensor,
   divTensor,
+  squareTensor,
   mapTensor,
   zipWithTensor
   ) where
@@ -56,6 +57,7 @@ import           Data.Proxy
 import           Data.Traversable
 import qualified Data.Vector.Generic as V
 import qualified Data.Vector.Storable as S
+import           Debug.Trace
 import           GHC.TypeLits
 import           Prelude hiding (replicate)
 import           System.IO.Unsafe
@@ -162,6 +164,9 @@ fromBlob (Blob buf) = Tensor (unsafePerformIO $ Buffer.toMemSub buf)
 toBlob :: Tensor ds -> Blob Double (Prod ds)
 toBlob (Tensor mem) = Blob (Buffer.fromMemSub mem)
 
+toBlobM :: MTensor ds -> Blob.MBlob Double (Prod ds)
+toBlobM (MTensor mem) = Blob (Buffer.fromMemSub mem)
+
 copyInto :: forall ds m. (MonadIO m, KnownDims ds) => Tensor ds -> MTensor ds -> m ()
 copyInto (Tensor src) (MTensor dst) = MemSub.copyInto src dst 0 0 (dimSize (Proxy @ ds))
 
@@ -259,12 +264,12 @@ mapTensorM table k f = go
       liftIO (fKernel shape xs ys)
       return (unsafeFreeze ys)
     fKernel :: [Int] -> Tensor ds -> MTensor ds -> IO ()
-    fKernel = memoc table k fSrc
-    fSrc :: TensorCL ds -> MTensorCL ds -> CL ()
-    fSrc (CTensor _ xs) (CTensor _ ys) = do
+    fKernel ds x y = memoc table k fSrc ds (reshape x) (reshapeM y)
+    fSrc :: TensorCL '[n] -> MTensorCL '[n] -> CL ()
+    fSrc xs ys = do
       i <- get_global_id 0
-      y <- f (at xs i)
-      at ys i .= y
+      y <- f (xs![i])
+      ys![i] .= y
     shape = [dimSize (Proxy @ ds)]
 
 zipWithTensor :: forall ds m k. (MonadIO m, KnownDims ds, Ord k)
@@ -285,12 +290,12 @@ zipWithTensorM table k f = go
       return (unsafeFreeze zs)
 
     fKernel :: [Int] -> Tensor ds -> Tensor ds -> MTensor ds -> IO ()
-    fKernel = memoc table k fSrc
-    fSrc :: TensorCL ds -> TensorCL ds -> MTensorCL ds -> CL ()
-    fSrc (CTensor _ xs) (CTensor _ ys) (CTensor _ zs) = do
+    fKernel ds x y z = memoc table k fSrc ds (reshape x) (reshape y) (reshapeM z)
+    fSrc :: TensorCL '[n] -> TensorCL '[n] -> MTensorCL '[n] -> CL ()
+    fSrc xs ys zs = do
       i <- get_global_id 0
-      z <- f (xs ! i) (ys ! i)
-      zs!i .= z
+      z <- f (xs ! [i]) (ys ! [i])
+      zs![i] .= z
 
     shape :: [Int]
     shape = [dimSize (Proxy @ ds)]

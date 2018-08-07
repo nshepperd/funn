@@ -11,7 +11,8 @@
 module AI.Funn.CL.Network (
   Network(..),
   Indexed(..), Assoc(..),
-  params, liftDiff, network
+  params, liftDiff, network,
+  toDiff
   ) where
 
 
@@ -29,7 +30,7 @@ import           GHC.TypeLits
 import           Prelude hiding (id)
 import           System.IO.Unsafe
 
-import           AI.Funn.CL.Param (Param)
+import           AI.Funn.CL.Param (Param(..))
 import qualified AI.Funn.CL.Param as Param
 import           AI.Funn.CL.Tensor (Tensor)
 import qualified AI.Funn.CL.Tensor as T
@@ -41,7 +42,10 @@ import           AI.Funn.Indexed.Indexed
 import           AI.Funn.Optimizer.Adam
 import           AI.Funn.Space
 
-data Network m p a b = Network (Diff m (Param p, a) b) (RVar (Blob.Blob p))
+data Network m p a b = Network {
+  netDiff :: Diff m (Param p, a) b,
+  netInit :: RVar (Blob.Blob p)
+  }
 
 params :: Network m p a b -> Proxy p
 params _ = Proxy
@@ -58,6 +62,18 @@ network diff init = Network (Diff run) init
     backward k db = do
       (dpar, da) <- k db
       return (TL.fromStrict (T.reshape dpar), da)
+
+toParam :: (Monad m, KnownNat p)
+        => Diff m (Tensor '[p]) (Param p)
+toParam = Diff run
+  where
+    run input = return (Param input, backward)
+    backward d_output = return (TL.toStrict d_output)
+
+toDiff :: (Monad m, KnownNat p)
+       => Network m p a b
+       -> Diff m (Tensor '[p], a) b
+toDiff (Network diff _) = Diff.first toParam >>> diff
 
 connect :: (KnownNat i, KnownNat j, Monad m) => Network m i a b -> Network m j b c -> Network m (i+j) a c
 connect (Network one i1) (Network two i2) = Network (Diff run) init
