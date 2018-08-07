@@ -7,7 +7,7 @@
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=20 #-}
-module AI.Funn.CL.Layers.Tensor (reluNet, sigmoidNet, biasNet, quadCostNet) where
+module AI.Funn.CL.Layers.Tensor (reluNet, sigmoidNet, biasNet, quadCostNet, reshapeNet) where
 
 import           Control.Monad
 import           Control.Monad.IO.Class
@@ -147,3 +147,12 @@ quadCostNet = liftDiff (Diff run)
       dxs <- scale (2*d) diff
       dys <- scale (-2*d) diff
       return (dxs, dys)
+
+-- Reshape
+
+reshapeNet :: forall ds es m. (MonadIO m, Prod ds ~ Prod es)
+           => Network m 0 (Tensor ds) (Tensor es)
+reshapeNet = liftDiff (Diff run)
+  where
+    run xs = return (Tensor.reshape xs, backward)
+    backward dys = return (Tensor.reshape dys)
