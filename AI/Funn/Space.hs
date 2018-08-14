@@ -57,8 +57,8 @@ class Scale m x a | a -> x where
   scale :: x -> a -> m a
 
 class (Zero m a, Semi m a) => Additive m a where
-  plusm :: (HasCallStack, Foldable f) => f a -> m a
-  default plusm :: (Monad m, Foldable f) => f a -> m a
+  plusm :: [a] -> m a
+  default plusm :: (Monad m) => [a] -> m a
   plusm xs = do z <- zero
                 foldrM plus z xs
 
@@ -125,7 +125,7 @@ instance (Applicative m, Semi m a, Semi m b) => Semi m (a, b) where
   plus (a1, b1) (a2, b2) = liftA2 (,) (plus a1 a2) (plus b1 b2)
 
 instance (Applicative m, Additive m a, Additive m b) => Additive m (a, b) where
-  plusm abs = let (as, bs) = unzip (toList abs)
+  plusm abs = let (as, bs) = unzip abs
               in liftA2 (,) (plusm as) (plusm bs)
 
 instance (Applicative m, Scale m x a, Scale m x b) => Scale m x (a,b) where
@@ -150,7 +150,7 @@ instance (Applicative m, Semi m a, Semi m b, Semi m c) => Semi m (a, b, c) where
   plus (a1, b1, c1) (a2, b2, c2) = liftA3 (,,) (plus a1 a2) (plus b1 b2) (plus c1 c2)
 
 instance (Applicative m, Additive m a, Additive m b, Additive m c) => Additive m (a, b, c) where
-  plusm abs = let (as, bs, cs) = unzip3 (toList abs)
+  plusm abs = let (as, bs, cs) = unzip3 abs
               in liftA3 (,,) (plusm as) (plusm bs) (plusm cs)
 
 

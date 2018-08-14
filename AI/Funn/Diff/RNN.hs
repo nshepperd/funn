@@ -43,7 +43,7 @@ scanlDiff layer = Diff run
                                   back (ds', dos) = do
                                     (dxis, ds) <- runStateT (traverseBack go_backward (V.zip dos ks)) ds'
                                     let (dxs, dis) = V.unzip dxis
-                                    dx <- plusm dxs
+                                    dx <- plusm (toList dxs)
                                     return (dx, (ds, dis))
                                 return ((s', os), back)
 
@@ -96,7 +96,7 @@ mapDiff layer = Diff run
 vsumDiff :: (Monad m, Additive m a) => Diff m (Vector a) a
 vsumDiff = Diff run
   where
-    run inputs = do out <- plusm inputs
+    run inputs = do out <- plusm (toList inputs)
                     let !n = V.length inputs
                         back dout = return (V.replicate n dout)
                     return (out, back)

@@ -54,7 +54,7 @@ mapLayer (Network p sub_diff sub_init) = Network p (Diff run) sub_init
       dpis <- sequenceA (V.zipWith id ks dos)
       let
         (dps, dis) = V.unzip dpis
-      return (runIdentity (plusm dps), dis)
+      return (runIdentity (plusm (toList dps)), dis)
 
 vsumLayer :: (Monad m, Additive m a) => Network m (Vector a) a
 vsumLayer = liftDiff vsumDiff

@@ -19,13 +19,11 @@ import           Control.Applicative
 import           Control.Exception
 import           Control.Monad
 import           Control.Monad.IO.Class
-import           Data.IORef
-import           Data.List hiding (replicate)
+import           Data.Foldable
 import           Data.Monoid
 import           Data.Proxy
 import           Data.Traversable
 import           GHC.TypeLits
-import           Prelude hiding (replicate)
 import           System.IO.Unsafe
 
 import           AI.Funn.CL.Blob (Blob, BlobT(Blob))
@@ -50,7 +48,7 @@ instance (MonadIO m, KnownNat n) => Semi m (Param ω n) where
   plus (Param x) (Param y) = Param <$> plus x y
 
 instance (MonadIO m, KnownNat n) => Additive m (Param ω n) where
-  plusm xs = Param <$> plusm (map getParam . toList $ xs)
+  plusm xs = Param <$> plusm (map getParam xs)
 
 instance (MonadIO m, KnownNat n) => Scale m Double (Param ω n) where
   scale x (Param xs) = Param <$> scale x xs
