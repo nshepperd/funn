@@ -71,15 +71,17 @@ if __name__ == '__main__':
             loop(src, visited, deps, order)
 
     for src in order:
+        dst = '{src}.hi {src}.o'.format(src = src.replace('.hs', ''))
+        p_dst = '{src}.p_hi {src}.p_o'.format(src = src.replace('.hs', ''))
         if deps[src]:
             all_deps = ' '.join([d + '.hi' for d in deps[src]] +
                                 [d + '.p_hi' for d in deps[src]])
             searchdirs = ' '.join('-i{}'.format(escape(s)) for s in search)
 
-            print ': {src} | {deps} |> !ghcc {search} |>'.format(src=src, deps=all_deps,
-                                                                 search=searchdirs)
-            print ': {src} | {deps} |> !ghcc_p {search} |>'.format(src=src, deps=all_deps,
-                                                                   search=searchdirs)
+            print ': {src} | {deps} |> !ghcc {search} |> {dst}'.format(src=src, deps=all_deps,
+                                                                       search=searchdirs, dst=dst)
+            print ': {src} | {deps} |> !ghcc_p {search} |> {p_dst}'.format(src=src, deps=all_deps,
+                                                                           search=searchdirs, p_dst=p_dst)
         else:
-            print ': {src} |> !ghcc |>'.format(src=src)
-            print ': {src} |> !ghcc_p |>'.format(src=src)
+            print ': {src} |> !ghcc |> {dst}'.format(src=src, dst=dst)
+            print ': {src} |> !ghcc_p |> {p_dst}'.format(src=src, p_dst=p_dst)
