@@ -1,6 +1,41 @@
 include_rules
 
-run $(HCC) ./*.hs
+preload AI/Funn
+preload AI/Funn/CL
+preload AI/Funn/CL/Batched
+preload AI/Funn/CL/Batched/Layers
+preload AI/Funn/CL/DSL
+preload AI/Funn/CL/Layers
+preload AI/Funn/Diff
+preload AI/Funn/Flat
+preload AI/Funn/Indexed
+preload AI/Funn/Models
+preload AI/Funn/Network
+preload AI/Funn/Optimizer
+preload Testing
+
+SOURCES=AI/Funn/*.hs
+SOURCES+=AI/Funn/CL/*.hs
+SOURCES+=AI/Funn/CL/Batched/*.hs
+SOURCES+=AI/Funn/CL/Batched/Layers/*.hs
+SOURCES+=AI/Funn/CL/DSL/*.hs
+SOURCES+=AI/Funn/CL/Layers/*.hs
+SOURCES+=AI/Funn/Diff/*.hs
+SOURCES+=AI/Funn/Flat/*.hs
+SOURCES+=AI/Funn/Indexed/*.hs
+SOURCES+=AI/Funn/Models/*.hs
+SOURCES+=AI/Funn/Network/*.hs
+SOURCES+=AI/Funn/Optimizer/*.hs
+SOURCES+=Testing/*.hs
+SOURCES+=*.hs
+
+run $(HCC) $(SOURCES)
 
 : foreach *.o | $(LIBS) |> !ghc $(LIBS) |> %B
 : foreach *.p_o | $(PROF_LIBS) |> !ghc -prof $(PROF_LIBS) |> %B_p
+
+: Testing/pure.o | $(LIBS) <Testing_Util> |> !ghc $(LIBS) Testing/Util.o |> Testing/pure
+: Testing/pure |> ./%f |>
+
+: Testing/opencl.o | $(LIBS) <Testing_Util> |> !ghc $(LIBS) Testing/Util.o |> Testing/opencl
+: Testing/opencl |> ./%f |>

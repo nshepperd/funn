@@ -50,6 +50,15 @@ def loop(src, visited, deps, order):
 def escape(string):
     return "'" + string.replace("'", r"'\''") + "'"
 
+def removedot(path):
+    if path.startswith('./'):
+        return path[2:]
+    return path
+
+def groupname(search, path):
+    base = removedot(path)
+    return removedot(os.path.relpath(search[0], '.') + '/<' + base.replace('/', '_') + '>')
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', dest='search', action='append', help = 'Source search path')
@@ -71,11 +80,14 @@ if __name__ == '__main__':
             loop(src, visited, deps, order)
 
     for src in order:
-        dst = '{src}.hi {src}.o'.format(src = src.replace('.hs', ''))
-        p_dst = '{src}.p_hi {src}.p_o'.format(src = src.replace('.hs', ''))
+        base = removedot(src.replace('.hs', ''))
+        group = '<' + base.replace('/', '_') + '>'
+        dst = '{base}.hi {base}.o {group}'.format(base = base, group = group)
+        p_dst = '{base}.p_hi {base}.p_o {group}'.format(base = base, group = group)
         if deps[src]:
-            all_deps = ' '.join([d + '.hi' for d in deps[src]] +
-                                [d + '.p_hi' for d in deps[src]])
+            # all_deps = ' '.join([d + '.hi' for d in deps[src]] +
+            #                     [d + '.p_hi' for d in deps[src]])
+            all_deps = ' '.join([groupname(search, os.path.relpath(d, search[0])) for d in deps[src]])
             searchdirs = ' '.join('-i{}'.format(escape(s)) for s in search)
 
             print ': {src} | {deps} |> !ghcc {search} |> {dst}'.format(src=src, deps=all_deps,
