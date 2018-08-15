@@ -34,7 +34,7 @@ import           AI.Funn.CL.LSTM
 import           AI.Funn.CL.Layers.Convolution
 import           AI.Funn.CL.Layers.FullyConnected
 import           AI.Funn.CL.Layers.Misc
-import           AI.Funn.CL.Layers.Tensor
+import qualified AI.Funn.CL.Layers.Tensor as LT
 import           AI.Funn.CL.Layers.Upscale
 import           AI.Funn.CL.Mixing
 import           AI.Funn.CL.MonadCL
@@ -307,10 +307,10 @@ prop_fc_net :: Property
 prop_fc_net = checkGradientNet (fcNet @3 @3)
 
 prop_quadcost_net :: Property
-prop_quadcost_net = checkGradientNet (quadCostNet @[3,4])
+prop_quadcost_net = checkGradientNet (LT.quadCostNet @[3,4])
 
 prop_prelu_net :: Property
-prop_prelu_net = checkGradientNet (preluNet @'[3])
+prop_prelu_net = checkGradientNet (LT.preluNet @'[3])
 
 -- Equality
 

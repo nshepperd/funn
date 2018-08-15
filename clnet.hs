@@ -37,15 +37,16 @@ import           System.IO.Unsafe
 import           System.Random
 import           Text.Printf
 
+import           AI.Funn.CL.Batched.Layers.FullyConnected
+import           AI.Funn.CL.Batched.Layers.Simple
+import           AI.Funn.CL.Batched.Network
 import           AI.Funn.CL.Blob (Blob(..))
 import qualified AI.Funn.CL.Blob as Blob
-import           AI.Funn.CL.Layers.Convolution
-import           AI.Funn.CL.Layers.FullyConnected
-import           AI.Funn.CL.Layers.Tensor
+import qualified AI.Funn.CL.LazyMem as LM
 import           AI.Funn.CL.MonadCL
-import           AI.Funn.CL.Network
 import           AI.Funn.CL.Tensor (Tensor(..))
 import qualified AI.Funn.CL.Tensor as Tensor
+import qualified AI.Funn.CL.TensorLazy as TL
 import           AI.Funn.Common
 import           AI.Funn.Diff.Diff (Diff(..), Derivable(..))
 import qualified AI.Funn.Diff.Diff as Diff
@@ -55,33 +56,47 @@ import           AI.Funn.Optimizer.Adam
 import           AI.Funn.Space
 import           AI.Funn.TypeLits
 
-fixSize :: forall a c. Indexed c => c 0 (Tensor '[a]) (Tensor '[a])
+-- Batch Size.
+type W = 10
+
+fixSize :: forall a c. Indexed c => c 0 (Tensor '[W, a]) (Tensor '[W, a])
 fixSize = iid
 
-mainNetwork :: Network IO _ (Tensor '[2]) (Tensor '[1])
+mainNetwork :: Network IO W _ (Tensor '[W, 2]) (Tensor '[W, 1])
 mainNetwork = fcNet ~>> sigmoidNet ~>> (fixSize @3) ~>> fcNet
 
-evalNetwork :: Network IO _ (Tensor '[2], Tensor '[1]) Double
+evalNetwork :: Network IO W _ (Tensor '[W, 2], Tensor '[W, 1]) (Tensor '[W])
 evalNetwork = first mainNetwork ~>> quadCostNet
+
+catMany :: [Tensor ds] -> Tensor (ω ': ds)
+catMany tensors = unsafePerformIO (Tensor <$> LM.toStrict buffers)
+  where
+    buffers = foldMap (LM.fromStrict . getTensor) tensors
+
+collect :: IO (Tensor '[2], Tensor '[1]) -> IO (Tensor '[W, 2], Tensor '[W, 1])
+collect dataset = do
+  items <- replicateM 10 dataset
+  return (catMany (map fst items), catMany (map snd items))
 
 train :: Tensor _ -> IO (Tensor '[2], Tensor '[1]) -> IO ()
 train initialPar dataset = do
-    let
-      evalDiff = toDiff evalNetwork
-      objective par = do
-        pair <- dataset
-        (o, k) <- runDiff evalDiff (par, pair)
-        (dpar, _) <- k 1
-        return (o, dpar)
+  ones <- Tensor.replicate 1
+  let
+    objective par = do
+      pair <- collect dataset
+      (o, k) <- runNetwork evalNetwork (par, pair)
+      (dpar, _) <- k ones
+      oo <- sum <$> Tensor.toList o
+      return (oo / 10, averageGrad dpar)
 
-      go av trainState = do
-          (o, grad) <- objective (extractAdam trainState)
-          trainState' <- updateAdam grad trainState
-          print av
-          go (updateRunningAverage o av) trainState'
+    go av trainState = do
+      (o, grad) <- objective (extractAdam trainState)
+      trainState' <- updateAdam grad trainState
+      print av
+      go (updateRunningAverage o av) trainState'
 
-    trainState <- initAdam 0.01 0.9 0.999 1e-8 initialPar :: IO (AdamState IO (Tensor _) (Tensor _))
-    go (newRunningAverage 0.99) trainState
+  trainState <- initAdam 0.01 0.9 0.999 1e-8 initialPar :: IO (AdamState IO (Tensor _) (Tensor _))
+  go (newRunningAverage 0.99) trainState
 
 fromFlat :: (MonadIO m, KnownNat n) => F.Blob n -> m (Tensor '[n])
 fromFlat blob = Tensor.fromList (F.toList blob)

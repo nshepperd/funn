@@ -11,6 +11,8 @@ GHC_LDFLAGS=-package vector -package random-fu -package reinterpret-cast -packag
 
 LIBS = $(HSROOT)/AI/Funn/*.o
 LIBS += $(HSROOT)/AI/Funn/CL/*.o
+LIBS += $(HSROOT)/AI/Funn/CL/Batched/*.o
+LIBS += $(HSROOT)/AI/Funn/CL/Batched/Layers/*.o
 LIBS += $(HSROOT)/AI/Funn/CL/DSL/*.o
 LIBS += $(HSROOT)/AI/Funn/CL/Layers/*.o
 LIBS += $(HSROOT)/AI/Funn/Diff/*.o
@@ -21,6 +23,8 @@ LIBS += $(HSROOT)/AI/Funn/Optimizer/*.o
 LIBS += $(HSROOT)/c/*.o
 PROF_LIBS = $(HSROOT)/AI/Funn/*.p_o
 PROF_LIBS += $(HSROOT)/AI/Funn/CL/*.p_o
+PROF_LIBS += $(HSROOT)/AI/Funn/CL/Batched/*.p_o
+PROF_LIBS += $(HSROOT)/AI/Funn/CL/Batched/Layers/*.p_o
 PROF_LIBS += $(HSROOT)/AI/Funn/CL/DSL/*.p_o
 PROF_LIBS += $(HSROOT)/AI/Funn/CL/Layers/*.p_o
 PROF_LIBS += $(HSROOT)/AI/Funn/Diff/*.p_o

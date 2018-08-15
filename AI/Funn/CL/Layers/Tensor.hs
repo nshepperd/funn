@@ -7,7 +7,7 @@
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=20 #-}
-module AI.Funn.CL.Layers.Tensor (reluNet, sigmoidNet, biasNet, preluNet, quadCostNet, reshapeNet) where
+module AI.Funn.CL.Layers.Tensor (reluNet, sigmoidDiff, sigmoidNet, biasNet, preluNet, quadCostNet, reshapeNet) where
 
 import           Control.Monad
 import           Control.Monad.IO.Class

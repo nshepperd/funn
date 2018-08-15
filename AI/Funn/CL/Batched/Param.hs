@@ -11,7 +11,8 @@
 module AI.Funn.CL.Batched.Param (
   Param(..),
   reshape,
-  split
+  split,
+  appendD
   ) where
 
 

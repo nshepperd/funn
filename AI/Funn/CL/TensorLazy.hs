@@ -78,5 +78,5 @@ toStrict (Tensor buf) = T.Tensor (unsafePerformIO $ LazyMem.toStrict buf)
 append :: Tensor '[a] -> Tensor '[b] -> Tensor '[a+b]
 append (Tensor one) (Tensor two) = Tensor (LazyMem.append one two)
 
-nul :: Tensor '[0]
+nul :: (Prod ds ~ 0) => Tensor ds
 nul = Tensor mempty
