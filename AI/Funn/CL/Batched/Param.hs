@@ -74,7 +74,4 @@ split (Param xs) = case T.split xs of
 
 -- O(ω)
 appendD :: forall ω a b. (KnownDimsF [ω, a, b]) => TL.Tensor [ω, a] -> TL.Tensor [ω, b] -> TL.Tensor [ω, a+b]
-appendD (TL.Tensor t1) (TL.Tensor t2) = TL.Tensor $ fold (map part [0..ω-1])
-  where
-    [ω,a,b] = dimVal (Proxy @[ω, a, b])
-    part i = LM.slice (i*a) a t1 <> LM.slice (i*b) b t2
+appendD = TL.appendW

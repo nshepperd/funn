@@ -34,8 +34,13 @@ run $(HCC) $(SOURCES)
 : foreach *.o | $(LIBS) |> !ghc $(LIBS) |> %B
 : foreach *.p_o | $(PROF_LIBS) |> !ghc -prof $(PROF_LIBS) |> %B_p
 
-: Testing/pure.o | $(LIBS) <Testing_Util> |> !ghc $(LIBS) Testing/Util.o |> Testing/pure
+TESTING_LIBS=Testing/Util.o
+
+: Testing/pure.o | $(LIBS) $(TESTING_LIBS) |> !ghc $(LIBS) $(TESTING_LIBS) |> Testing/pure
 : Testing/pure |> ./%f |>
 
-: Testing/opencl.o | $(LIBS) <Testing_Util> |> !ghc $(LIBS) Testing/Util.o |> Testing/opencl
+: Testing/opencl.o | $(LIBS) $(TESTING_LIBS) |> !ghc $(LIBS) $(TESTING_LIBS) |> Testing/opencl
 : Testing/opencl |> ./%f |>
+
+: Testing/batched.o | $(LIBS) $(TESTING_LIBS) |> !ghc $(LIBS) $(TESTING_LIBS) |> Testing/batched
+: Testing/batched |> ./%f |>

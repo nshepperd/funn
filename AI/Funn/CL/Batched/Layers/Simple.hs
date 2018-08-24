@@ -7,7 +7,7 @@
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=20 #-}
-module AI.Funn.CL.Batched.Layers.Simple (biasNet, sigmoidNet, quadCostNet, averageGrad) where
+module AI.Funn.CL.Batched.Layers.Simple (biasNet, sigmoidNet, quadCostNet, averageGrad, reshapeNet) where
 
 import           Control.Monad
 import           Control.Monad.IO.Class
@@ -110,6 +110,15 @@ quadCostNet = liftDiff (Diff run)
       return (quadForward xs ys, backward xs ys)
     backward xs ys dos = do
       return (quadBackward dos xs ys)
+
+-- Reshape
+
+reshapeNet :: (KnownNat ω, Prod as ~ Prod bs, Monad m)
+           => Network m ω 0 (Tensor (ω ': as)) (Tensor (ω ': bs))
+reshapeNet = liftDiff (Diff run)
+  where
+    run as = return (Tensor.reshape as, backward)
+    backward bs = return (Tensor.reshape bs)
 
 -- Fanout
 

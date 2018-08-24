@@ -15,7 +15,11 @@ module AI.Funn.CL.TensorLazy (
   fromStrict,
   toStrict,
   append,
-  nul
+  nul,
+  split,
+  reshape,
+  appendW,
+  splitW
   ) where
 
 
@@ -24,6 +28,7 @@ import           Control.Monad
 import           Control.Monad.IO.Class
 import           Data.Foldable
 import           Data.Monoid
+import           Data.Proxy
 import           Data.Traversable
 import           GHC.TypeLits
 import           System.IO.Unsafe
@@ -39,6 +44,9 @@ import           AI.Funn.Optimizer.Adam
 import           AI.Funn.Space
 
 newtype Tensor (ds :: [Nat]) = Tensor { getTensor :: LazyMem Double }
+
+instance Derivable (Tensor ds) where
+  type D (Tensor ds) = Tensor ds
 
 instance (MonadIO m, KnownDims ds) => Zero m (Tensor ds) where
   zero = fromStrict <$> zero
@@ -78,5 +86,30 @@ toStrict (Tensor buf) = T.Tensor (unsafePerformIO $ LazyMem.toStrict buf)
 append :: Tensor '[a] -> Tensor '[b] -> Tensor '[a+b]
 append (Tensor one) (Tensor two) = Tensor (LazyMem.append one two)
 
+-- O(1)
+split :: forall a b. (KnownNat a, KnownNat b) => Tensor '[a+b] -> (Tensor '[a], Tensor '[b])
+split (Tensor whole) = (Tensor (LazyMem.slice 0 a whole),
+                        Tensor (LazyMem.slice a b whole))
+  where
+    [a, b] = dimVal (Proxy @[a,b])
+
+-- O(1)
+reshape :: (Prod as ~ Prod bs) => Tensor as -> Tensor bs
+reshape (Tensor mem) = Tensor mem
+
 nul :: (Prod ds ~ 0) => Tensor ds
 nul = Tensor mempty
+
+appendW :: forall ω a b. (KnownDimsF [ω, a, b]) => Tensor '[ω, a] -> Tensor '[ω, b] -> Tensor '[ω, a+b]
+appendW (Tensor t1) (Tensor t2) = Tensor $ fold (map part [0..ω-1])
+  where
+    [ω,a,b] = dimVal (Proxy @[ω, a, b])
+    part i = LazyMem.slice (i*a) a t1 <> LazyMem.slice (i*b) b t2
+
+splitW :: forall ω a b. (KnownDimsF [ω, a, b]) => Tensor [ω, a+b] -> (Tensor [ω, a], Tensor [ω, b])
+splitW (Tensor whole) = (Tensor (foldMap partA [0..ω-1]),
+                         Tensor (foldMap partB [0..ω-1]))
+  where
+    [ω,a,b] = dimVal (Proxy @[ω, a, b])
+    partA i = LazyMem.slice (i*(a+b)) a whole
+    partB i = LazyMem.slice (i*(a+b) + a) b whole

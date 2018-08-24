@@ -1,20 +1,34 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise #-}
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 module Testing.Util where
 
-import Control.Category ((>>>))
-import Control.Monad
-import Control.Monad.Trans
-import Data.Functor.Identity
-import GHC.TypeLits
-import Test.QuickCheck hiding (scale)
-import Test.QuickCheck.Monadic
+import           Control.Category ((>>>))
+import           Control.Monad
+import           Control.Monad.Trans
+import           Data.Functor.Identity
+import           GHC.TypeLits
+import           Test.QuickCheck hiding (scale)
+import           Test.QuickCheck.Monadic
 
-import AI.Funn.Diff.Diff (Diff(..), Derivable(..))
+import qualified AI.Funn.CL.Blob as CLBlob
+import           AI.Funn.CL.MonadCL (initOpenCL)
+import qualified AI.Funn.CL.Network as Network
+import           AI.Funn.CL.Tensor (Tensor)
+import qualified AI.Funn.CL.Tensor as Tensor
+import           AI.Funn.Diff.Diff (Diff(..), Derivable(..))
 import qualified AI.Funn.Diff.Diff as Diff
-import AI.Funn.Flat.Blob (Blob)
+import           AI.Funn.Flat.Blob (Blob)
 import qualified AI.Funn.Flat.Blob as Blob
-import AI.Funn.Space
+import           AI.Funn.Space
+
 
 instance KnownNat n => Arbitrary (Blob n) where
   arbitrary = Blob.generate arbitrary
@@ -126,3 +140,72 @@ putR b = Diff run
   where
     run a = pure ((a, b), backward)
     backward (da, db) = pure da
+
+
+-- Setup for OpenCL test cases.
+
+clProperty :: IO Property -> Property
+clProperty clProp = ioProperty (initOpenCL >> clProp)
+
+checkGradientCL' :: (KnownNat n, KnownNat m) => Diff IO (Blob n) (Blob m) -> Property
+checkGradientCL' diff = checkGradient 1e8 0.001 1e-4 clProperty diff
+
+checkGradientCL :: (Loadable a n1, D a ~ a,
+                    Loadable b n2, D b ~ b)
+               => Diff IO a b -> Property
+checkGradientCL diff = checkGradientCL' (fromCPUDiff >>> diff >>> fromGPUDiff)
+
+checkSameCL :: (Loadable a n1, D a ~ a,
+                Loadable b n2, D b ~ b,
+                Loadable c n1, D c ~ c,
+                Loadable d n2, D d ~ d)
+            => Diff IO a b -> Diff IO c d -> Property
+checkSameCL diff1 diff2 = (checkSame clProperty
+                           (fromCPUDiff >>> diff1 >>> fromGPUDiff)
+                           (fromCPUDiff >>> diff2 >>> fromGPUDiff))
+
+checkGradientNet :: (Loadable a n1, D a ~ a,
+                     Loadable b n2, D b ~ b,
+                     KnownNat p)
+                 => Network.Network IO p a b -> Property
+checkGradientNet net = checkGradientCL (Network.toDiff net)
+
+fromCPUDiff :: (Loadable a n, Loadable (D a) n) => Diff (IO) (Blob n) a
+fromCPUDiff = Diff run
+  where
+    run a = do x <- fromCPU a
+               return (x, backward)
+    backward b = fromGPU b
+
+fromGPUDiff :: (Loadable a n, Loadable (D a) n) => Diff (IO) a (Blob n)
+fromGPUDiff = Diff run
+  where
+    run a = do x <- fromGPU a
+               return (x, backward)
+    backward b = fromCPU b
+
+class KnownNat n => Loadable x n | x -> n where
+  fromCPU :: Blob n -> IO x
+  fromGPU :: x -> IO (Blob n)
+
+instance Loadable Double 1 where
+  fromCPU b = pure (head (Blob.toList b))
+  fromGPU x = pure (Blob.fromList [x])
+
+instance (KnownNat n, Floats a) => Loadable (CLBlob.Blob a n) n where
+  fromCPU a = CLBlob.fromList (Blob.toList a)
+  fromGPU a = Blob.fromList <$> CLBlob.toList a
+
+instance (KnownDims ds, n ~ Prod ds) => Loadable (Tensor ds) n where
+  fromCPU a = Tensor.fromList (Blob.toList a)
+  fromGPU t = Blob.fromList <$> Tensor.toList t
+
+instance (KnownNat n) => Loadable (Blob n) n where
+  fromCPU a = return a
+  fromGPU a = return a
+
+instance (KnownNat m, Loadable a n1, Loadable b n2, m ~ (n1 + n2)) => Loadable (a, b) m where
+  fromCPU ab = (,) <$> fromCPU a <*> fromCPU b
+    where
+      (a, b) = Blob.split ab
+  fromGPU (a, b) = Blob.cat <$> fromGPU a <*> fromGPU b
