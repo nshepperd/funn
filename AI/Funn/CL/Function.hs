@@ -91,7 +91,7 @@ sub (KernelProgram k) = KernelProgram k
 class RunKernel xs f | f -> xs where
   func :: HasCallStack => KernelProgram xs -> ([Int] -> (KernelArg -> KernelArg) -> f)
 
-instance RunKernel '[] (IO ()) where
+instance a ~ () => RunKernel '[] (IO a) where
   {-# INLINE func #-}
   func (KernelProgram k) ranges prependArgs = runCompiled k [prependArgs mempty] [] (map fromIntegral ranges) []
 

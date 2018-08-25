@@ -113,7 +113,7 @@ quadCostNet = liftDiff (Diff run)
 
 -- Reshape
 
-reshapeNet :: (KnownNat ω, Prod as ~ Prod bs, Monad m)
+reshapeNet :: forall as bs ω m. (KnownNat ω, Prod as ~ Prod bs, Monad m)
            => Network m ω 0 (Tensor (ω ': as)) (Tensor (ω ': bs))
 reshapeNet = liftDiff (Diff run)
   where
