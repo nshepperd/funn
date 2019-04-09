@@ -1,0 +1,37 @@
+cabal-version:       2.4
+name:                funn
+version:             0.1.0.0
+
+-- A short (one-line) description of the package.
+synopsis: My haskell neural networks library.
+
+-- A longer description of the package.
+-- description:
+
+-- A URL where users can report bugs.
+-- bug-reports:
+
+license:             MIT
+license-file:        LICENSE
+author:              Neil Shepperd
+maintainer:          nshepperd@gmail.com
+category:            AI
+
+
+library
+  exposed-modules:     AI.Funn.Search, AI.Funn.SGD, AI.Funn.Common, AI.Funn.Space, AI.Funn.TypeLits, AI.Funn.Diff.RNN, AI.Funn.Diff.Pointed, AI.Funn.Diff.Diff, AI.Funn.Diff.Dynamic, AI.Funn.Flat.Buffer, AI.Funn.Flat.LSTM, AI.Funn.Flat.Mixing, AI.Funn.Flat.ParBox, AI.Funn.Flat.Softmix, AI.Funn.Flat.Flat, AI.Funn.Flat.Tensor, AI.Funn.Flat.Blob, AI.Funn.Network.LSTM, AI.Funn.Network.Mixing, AI.Funn.Network.RNN, AI.Funn.Network.Network, AI.Funn.Network.Flat, AI.Funn.CL.LSTM, AI.Funn.CL.Mixing, AI.Funn.CL.MonadCL, AI.Funn.CL.Blob, AI.Funn.CL.Buffer, AI.Funn.CL.Flat, AI.Funn.CL.Function, AI.Funn.CL.MemSub, AI.Funn.CL.Tensor, AI.Funn.CL.Mem, AI.Funn.CL.TensorLazy, AI.Funn.CL.Param, AI.Funn.CL.Network, AI.Funn.CL.LazyMem, AI.Funn.CL.DSL.AST, AI.Funn.CL.DSL.Array, AI.Funn.CL.DSL.Code, AI.Funn.CL.DSL.Tensor, AI.Funn.CL.Layers.Misc, AI.Funn.CL.Layers.Convolution, AI.Funn.CL.Layers.Tensor, AI.Funn.CL.Layers.Upscale, AI.Funn.CL.Layers.FullyConnected, AI.Funn.CL.Batched.Param, AI.Funn.CL.Batched.BTensor, AI.Funn.CL.Batched.Network, AI.Funn.CL.Batched.GLOW, AI.Funn.CL.Batched.Layers.FullyConnected, AI.Funn.CL.Batched.Layers.Simple, AI.Funn.CL.Batched.Layers.GLOW, AI.Funn.CL.Batched.Layers.Triangular, AI.Funn.Models.RNNChar, AI.Funn.Optimizer.AMSGrad, AI.Funn.Optimizer.SGD, AI.Funn.Optimizer.Adam, AI.Funn.Indexed.Indexed
+
+  -- Modules included in this library but not exported.
+  -- other-modules:
+
+  -- -- LANGUAGE extensions used by modules in this package.
+  -- other-extensions:    BangPatterns, RecordWildCards, AllowAmbiguousTypes, DataKinds, DefaultSignatures, FlexibleContexts, FlexibleInstances, FunctionalDependencies, GADTs, MultiParamTypeClasses, PolyKinds, ScopedTypeVariables, TypeFamilies, TypeOperators, UndecidableInstances, UndecidableSuperClasses, RankNTypes, TypeInType, ForeignFunctionInterface, PartialTypeSignatures, KindSignatures, DeriveFunctor, StandaloneDeriving, ConstraintKinds, TypeApplications, GeneralizedNewtypeDeriving, TemplateHaskell
+
+  -- Other library packages from which modules are imported.
+  build-depends:       base ^>=4.12.0.0, containers ^>=0.6.0.1, mtl ^>=2.2.2, binary ^>=0.8.6.0, transformers ^>=0.5.6.2, deepseq ^>=1.4.4.0, bytestring ^>=0.10.8.2, lens, hmatrix, hopencl, QuickCheck, constraints, vector, Cabal, split, random-fu, free, ghc-typelits-knownnat, reinterpret-cast, binary-search, optparse-applicative, clock, criterion, random, ghc-typelits-natnormalise
+
+  -- Directories containing source files.
+  -- hs-source-dirs:
+
+  -- Base language which the package is written in.
+  default-language:    Haskell2010

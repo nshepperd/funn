@@ -5,7 +5,7 @@ HSROOT=$(TUP_CWD)
 GHC_FLAGS=-O2
 GHC_CFLAGS=-Wno-partial-type-signatures
 
-GHC_LDFLAGS=-package vector -package random-fu -package reinterpret-cast -package hmatrix -package optparse-applicative -package criterion -package constraints -package binary-search -package clock -package lens -package ghc-typelits-knownnat -package hopencl -package QuickCheck -rtsopts
+GHC_LDFLAGS=-rtsopts
 
  # vector random-fu reinterpret-cast hmatrix optparse-applicative criterion constraints binary-search clock lens ghc-typelits-knownnat hopencl QuickCheck
 

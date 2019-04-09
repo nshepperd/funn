@@ -1,14 +1,16 @@
 #!/bin/bash
 
 HSROOT=$1
-GLOBAL=$(ghc --print-libdir)/package.conf.d
-LOCAL=$(grep package-db ${HSROOT}/cabal.sandbox.config | grep -o '/.*$')
+# GLOBAL=$(ghc --print-libdir)/package.conf.d
+# LOCAL=$(grep package-db ${HSROOT}/cabal.sandbox.config | grep -o '/.*$')
 
-TUPDIR=$(pwd | egrep -o '/.*tupjob-[0-9]+')
-if [ -n $TUPDIR ]; then
-    LOCAL=${TUPDIR}${LOCAL}
-fi
+# TUPDIR=$(pwd | egrep -o '/.*tupjob-[0-9]+')
+# if [ -n $TUPDIR ]; then
+#     LOCAL=${TUPDIR}${LOCAL}
+# fi
 
 shift
 
-HOME=/ GHC_PACKAGE_PATH=${LOCAL}:${GLOBAL} ghc "$@"
+# HOME=/ GHC_PACKAGE_PATH=${LOCAL}:${GLOBAL} ghc "$@"
+
+ghc "$@"
