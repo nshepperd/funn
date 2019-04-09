@@ -40,7 +40,7 @@ import           AI.Funn.TypeLits
 {-# NOINLINE fillSquare #-}
 fillSquare :: KernelProgram '[MTensorCL [w,h]]
 fillSquare = compile $ \arr -> do
-  [x, y] <- traverse get_global_id [0,1]
+  ~[x, y] <- traverse get_global_id [0,1]
   arr ! [x,y] .= castExpr x + castExpr y
 
 {-# NOINLINE iconv2dForward #-}
@@ -48,7 +48,7 @@ iconv2dForward :: KernelProgram '[TensorCL [k, k, c1, c2],
                                   TensorCL [ow + k - 1, oh + k - 1, c1],
                                   MTensorCL [ow, oh, c2]]
 iconv2dForward = compile $ \flt input output -> do
-  [ox, oy, oc] <- traverse get_global_id [0, 1, 2]
+  ~[ox, oy, oc] <- traverse get_global_id [0, 1, 2]
   let [k, _, c1, c2] = dimsOf flt
   acc <- eval 0
   forEach 0 k $ \kx -> do
@@ -62,7 +62,7 @@ iconv2dBackward :: KernelProgram '[TensorCL [k, k, c1, c2],
                                   MTensorCL [ow + k - 1, oh + k - 1, c1],
                                   TensorCL [ow, oh, c2]]
 iconv2dBackward = compile $ \flt d_input d_output -> do
-  [ix, iy, ic] <- traverse get_global_id [0, 1, 2]
+  ~[ix, iy, ic] <- traverse get_global_id [0, 1, 2]
   let [kw, kh, c1, c2] = dimsOf flt
   let [iw, ih, _] = dimsOf d_input
   acc <- eval 0
@@ -81,7 +81,7 @@ iconv2dFilter :: KernelProgram '[MTensorCL [k, k, c1, c2],
                                  TensorCL [ow + k - 1, oh + k - 1, c1],
                                  TensorCL [ow, oh, c2]]
 iconv2dFilter = compile $ \d_flt input d_output -> do
-  [kx, ky, ic, oc] <- get_global_id 0 >>= splitIndex (dimsOf d_flt)
+  ~[kx, ky, ic, oc] <- get_global_id 0 >>= splitIndex (dimsOf d_flt)
   let [ow, oh, _] = dimsOf d_output
   acc <- eval 0
   forEach 0 ow $ \ox -> do

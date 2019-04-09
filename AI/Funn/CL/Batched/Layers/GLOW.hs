@@ -1,3 +1,4 @@
+{-# LANGUAGE NoStarIsType #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -70,7 +71,7 @@ appendInvLazy = invert splitInvLazy
 {-# NOINLINE splitProgram #-}
 splitProgram :: KernelProgram '[TensorCL '[a, 2, b], MTensorCL '[2, a, b]]
 splitProgram = compile $ \xs ys -> do
-  [i,a,b] <- traverse get_global_id [0,1,2]
+  ~[i,a,b] <- traverse get_global_id [0,1,2]
   ys![i,a,b] .= xs![a,i,b]
 
 splitTop :: (KnownNat (Prod ds)) => Tensor (2:ds) -> (Tensor ds, Tensor ds)
@@ -89,7 +90,7 @@ splitChannel xs = unsafePerformIO $ do
 {-# NOINLINE appendProgram #-}
 appendProgram :: KernelProgram '[TensorCL '[a, b], TensorCL '[a, b], MTensorCL '[a, 2, b]]
 appendProgram = compile $ \xs ys zs -> do
-  [a,b] <- traverse get_global_id [0,1]
+  ~[a,b] <- traverse get_global_id [0,1]
   zs![a,0,b] .= xs![a,b]
   zs![a,1,b] .= ys![a,b]
 
@@ -135,14 +136,14 @@ affineFwdNet = first (invForward splitChannelInv) ~>> liftDiff (Diff run)
 {-# NOINLINE affineProgram #-}
 affineProgram :: KernelProgram '[TensorCL '[a], TensorCL '[a], TensorCL '[a], MTensorCL '[a]]
 affineProgram = compile $ \ss xs ts ys -> do
-  [i] <- traverse get_global_id [0]
+  ~[i] <- traverse get_global_id [0]
   ys![i] .= exp (ss![i]) * xs![i] + ts![i]
 
 {-# NOINLINE affineDiffProgram #-}
 affineDiffProgram :: KernelProgram '[TensorCL '[a], TensorCL '[a], TensorCL '[a],
                                      MTensorCL '[a], MTensorCL '[a]]
 affineDiffProgram = compile $ \s xa dya ds dxa -> do
-  [i] <- traverse get_global_id [0]
+  ~[i] <- traverse get_global_id [0]
   es <- eval $ exp (s![i])
   ds![i] .= es * xa![i] * dya![i]
   dxa![i] .= es * dya![i]
@@ -174,7 +175,7 @@ affineExpDiff s xa dya = unsafePerformIO $ do
 {-# NOINLINE affineInvertProgram #-}
 affineInvertProgram :: KernelProgram '[TensorCL '[a], TensorCL '[a], TensorCL '[a], MTensorCL '[a]]
 affineInvertProgram = compile $ \s ya t xa -> do
-  [i] <- traverse get_global_id [0]
+  ~[i] <- traverse get_global_id [0]
   xa![i] .= (ya![i] - t![i]) / exp (s![i])
 
 -- Calculates xa = (ya - t) / exp(s)
@@ -192,7 +193,7 @@ affineInvert s ya t = unsafePerformIO $ do
 affineInvertDiffProgram :: KernelProgram '[TensorCL '[a], TensorCL '[a], TensorCL '[a],
                                            MTensorCL '[a], MTensorCL '[a], MTensorCL '[a]]
 affineInvertDiffProgram = compile $ \s xa dxa ds dya dt -> do
-  [i] <- traverse get_global_id [0]
+  ~[i] <- traverse get_global_id [0]
   -- dxa/ds = -(ya - t) / exp(s) = -xa
   -- dxa/dya = 1 / exp(s)
   -- dxa/dt = -1 / exp(s) = -dya

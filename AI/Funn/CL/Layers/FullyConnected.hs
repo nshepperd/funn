@@ -72,7 +72,7 @@ mulVM ys ws = unsafePerformIO $ do
 {-# NOINLINE outerVVProgram #-}
 outerVVProgram :: KernelProgram '[TensorCL '[a], TensorCL '[b], MTensorCL '[a, b]]
 outerVVProgram = compile $ \xs ys ws -> do
-  [i,j] <- traverse get_global_id [0,1]
+  ~[i,j] <- traverse get_global_id [0,1]
   ws![i,j] .= xs![i] * ys![j]
 
 outerVV :: KnownDimsF [a, b] => Tensor '[a] -> Tensor '[b] -> Tensor [a,b]

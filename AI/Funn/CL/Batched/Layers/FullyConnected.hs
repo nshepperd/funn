@@ -45,7 +45,7 @@ import           AI.Funn.TypeLits
 {-# NOINLINE mulMVProgram #-}
 mulMVProgram :: KernelProgram '[TensorCL '[b, a], TensorCL '[ω, a], MTensorCL '[ω, b]]
 mulMVProgram = compile $ \ws xs ys -> do
-  [u, j] <- traverse get_global_id [0,1]
+  ~[u, j] <- traverse get_global_id [0,1]
   let [_, a] = dimsOf xs
   acc <- eval 0
   forEach 0 a $ \i -> do
@@ -61,7 +61,7 @@ mulMV ws xs = unsafePerformIO $ do
 {-# NOINLINE mulVMProgram #-}
 mulVMProgram :: KernelProgram '[TensorCL '[ω, b], TensorCL '[b, a], MTensorCL '[ω, a]]
 mulVMProgram = compile $ \ys ws xs -> do
-  [u, i] <- traverse get_global_id [0,1]
+  ~[u, i] <- traverse get_global_id [0,1]
   let [_, b] = dimsOf ys
   acc <- eval 0
   forEach 0 b $ \j -> do
@@ -77,7 +77,7 @@ mulVM ys ws = unsafePerformIO $ do
 {-# NOINLINE outerVVProgram #-}
 outerVVProgram :: KernelProgram '[TensorCL '[ω, a], TensorCL '[ω, b], MTensorCL '[ω, a, b]]
 outerVVProgram = compile $ \xs ys ws -> do
-  [u,i,j] <- traverse get_global_id [0,1,2]
+  ~[u,i,j] <- traverse get_global_id [0,1,2]
   ws![u,i,j] .= xs![u,i] * ys![u,j]
 
 outerVV :: KnownDimsF [ω, a, b] => Tensor '[ω, a] -> Tensor '[ω, b] -> Tensor [ω,a,b]

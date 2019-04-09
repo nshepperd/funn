@@ -1,3 +1,4 @@
+{-# LANGUAGE NoStarIsType #-}
 {-# LANGUAGE TypeFamilies, KindSignatures, DataKinds, TypeOperators #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}

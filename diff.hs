@@ -1,3 +1,4 @@
+{-# LANGUAGE NoStarIsType #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}

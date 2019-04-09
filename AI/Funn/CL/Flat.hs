@@ -1,3 +1,4 @@
+{-# LANGUAGE NoStarIsType #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -115,7 +116,7 @@ softmaxCost = Diff run
   where run (bo, target) = do
           o <- Blob.createBlob @ 2
           liftIO (forwardKernel n target bo o)
-          [s, cost] <- Blob.toList o
+          ~[s, cost] <- Blob.toList o
           return (cost, backward target s bo)
 
         backward target s bo dcost = do

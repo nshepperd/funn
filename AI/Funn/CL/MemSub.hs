@@ -83,7 +83,8 @@ arg (MemSub mem offset size) = Mem.arg mem <> int32Arg offset
 
 -- O(n)
 fromVector :: (MonadIO m, Storable a) => S.Vector a -> m (MemSub a)
-fromVector xs = do buf@(MemSub mem 0 _) <- malloc (V.length xs)
+fromVector xs = do buf <- malloc (V.length xs)
+                   let (MemSub mem 0 _) = buf
                    Mem.pokeSubArray 0 xs mem
                    return buf
 

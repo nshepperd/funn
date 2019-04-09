@@ -1,3 +1,4 @@
+{-# LANGUAGE NoStarIsType #-}
 {-# LANGUAGE TypeFamilies, MultiParamTypeClasses, FlexibleContexts, FlexibleInstances #-}
 {-# LANGUAGE KindSignatures, DataKinds, TypeOperators #-}
 {-# LANGUAGE ScopedTypeVariables #-}

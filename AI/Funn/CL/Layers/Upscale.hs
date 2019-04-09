@@ -1,3 +1,4 @@
+{-# LANGUAGE NoStarIsType #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -44,14 +45,14 @@ import           AI.Funn.TypeLits
 doubleForward :: KernelProgram '[TensorCL [w, h, c],
                                  MTensorCL [2*w, 2*h, c]]
 doubleForward = compile $ \input output -> do
-  [ox, oy, c] <- traverse get_global_id [0, 1, 2]
+  ~[ox, oy, c] <- traverse get_global_id [0, 1, 2]
   output![ox, oy, c] .= input![ox `div'` 2, oy `div'` 2, c]
 
 {-# NOINLINE doubleBackward #-}
 doubleBackward :: KernelProgram '[MTensorCL [w, h, c],
                                   TensorCL [2*w, 2*h, c]]
 doubleBackward = compile $ \d_input d_output -> do
-  [ix, iy, c] <- traverse get_global_id [0, 1, 2]
+  ~[ix, iy, c] <- traverse get_global_id [0, 1, 2]
   ox <- eval (2 * ix)
   oy <- eval (2 * iy)
   d_input![ix, iy, c] .= sum [d_output![x,y,c] | (x,y) <- [

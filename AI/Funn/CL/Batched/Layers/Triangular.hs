@@ -48,7 +48,7 @@ import           AI.Funn.TypeLits
 {-# NOINLINE mulUVProgram #-}
 mulUVProgram :: KernelProgram '[TensorCL '[n, n], TensorCL '[ω, n], MTensorCL '[ω, n]]
 mulUVProgram = compile $ \ws xs ys -> do
-  [u, j] <- traverse get_global_id [0,1]
+  ~[u, j] <- traverse get_global_id [0,1]
   let [_, n] = dimsOf xs
   -- ys[j] = sum_{i=j..n-1} ws![j,i] * xs![i]
   acc <- eval $ 1 * xs![u, j]
@@ -66,7 +66,7 @@ mulUV ws ys = unsafePerformIO $ do
 {-# NOINLINE mulVUProgram #-}
 mulVUProgram :: KernelProgram '[TensorCL '[n, n], TensorCL '[ω, n], MTensorCL '[ω, n]]
 mulVUProgram = compile $ \ws xs ys -> do
-  [u, j] <- traverse get_global_id [0,1]
+  ~[u, j] <- traverse get_global_id [0,1]
   let [_, n] = dimsOf xs
   -- ys[j] = sum_{i ≤ j} ws![i,j] * xs![i]
   acc <- eval $ 1 * xs![u, j]
@@ -84,7 +84,7 @@ mulVU ys ws = unsafePerformIO $ do
 {-# NOINLINE invUVProgram #-}
 invUVProgram :: KernelProgram '[TensorCL '[n, n], TensorCL '[ω, n], MTensorCL '[ω, n]]
 invUVProgram = compile $ \ws ys xs -> do
-  [u] <- traverse get_global_id [0]
+  ~[u] <- traverse get_global_id [0]
   let [_, n] = dimsOf xs
   forEach 0 n $ \neg_j -> do
     -- j <- [n-1 .. 0]
@@ -107,7 +107,7 @@ invUV ws ys = unsafePerformIO $ do
 {-# NOINLINE invVUProgram #-}
 invVUProgram :: KernelProgram '[TensorCL '[n, n], TensorCL '[ω, n], MTensorCL '[ω, n]]
 invVUProgram = compile $ \ws ys xs -> do
-  [u] <- traverse get_global_id [0]
+  ~[u] <- traverse get_global_id [0]
   let [_, n] = dimsOf xs
   forEach 0 n $ \j -> do
     acc <- eval (ys![u, j])
@@ -127,7 +127,7 @@ invVU ys ws = unsafePerformIO $ do
 {-# NOINLINE mulLVProgram #-}
 mulLVProgram :: KernelProgram '[TensorCL '[n, n], TensorCL '[ω, n], MTensorCL '[ω, n]]
 mulLVProgram = compile $ \ws xs ys -> do
-  [u, j] <- traverse get_global_id [0,1]
+  ~[u, j] <- traverse get_global_id [0,1]
   let [_, n] = dimsOf xs
   -- ys[j] = sum_{i ≤ j} ws![i,j] * xs![i]
   acc <- eval $ 1 * xs![u, j]
@@ -138,7 +138,7 @@ mulLVProgram = compile $ \ws xs ys -> do
 {-# NOINLINE mulVLProgram #-}
 mulVLProgram :: KernelProgram '[TensorCL '[n, n], TensorCL '[ω, n], MTensorCL '[ω, n]]
 mulVLProgram = compile $ \ws xs ys -> do
-  [u, j] <- traverse get_global_id [0,1]
+  ~[u, j] <- traverse get_global_id [0,1]
   let [_, n] = dimsOf xs
   -- ys[j] = sum_{i=j..n-1} ws![j,i] * xs![i]
   acc <- eval $ 1 * xs![u, j]
@@ -149,7 +149,7 @@ mulVLProgram = compile $ \ws xs ys -> do
 {-# NOINLINE invLVProgram #-}
 invLVProgram :: KernelProgram '[TensorCL '[n, n], TensorCL '[ω, n], MTensorCL '[ω, n]]
 invLVProgram = compile $ \ws ys xs -> do
-  [u] <- traverse get_global_id [0]
+  ~[u] <- traverse get_global_id [0]
   let [_, n] = dimsOf xs
   forEach 0 n $ \j -> do
     acc <- eval (ys![u, j])
@@ -160,7 +160,7 @@ invLVProgram = compile $ \ws ys xs -> do
 {-# NOINLINE invVLProgram #-}
 invVLProgram :: KernelProgram '[TensorCL '[n, n], TensorCL '[ω, n], MTensorCL '[ω, n]]
 invVLProgram = compile $ \ws ys xs -> do
-  [u] <- traverse get_global_id [0]
+  ~[u] <- traverse get_global_id [0]
   let [_, n] = dimsOf xs
   forEach 0 n $ \neg_j -> do
     j <- eval (n - 1 - neg_j)
@@ -201,7 +201,7 @@ invVL ys ws = unsafePerformIO $ do
 {-# NOINLINE outerWWProgram #-}
 outerWWProgram :: KernelProgram '[TensorCL '[ω, a], TensorCL '[ω, b], MTensorCL '[ω, a, b]]
 outerWWProgram = compile $ \xs ys ws -> do
-  [u, i, j] <- traverse get_global_id [0, 1, 2]
+  ~[u, i, j] <- traverse get_global_id [0, 1, 2]
   ws![u,i,j] .= xs![u,i] * ys![u,j]
 
 outerWW :: KnownDimsF [ω, a, b] => Tensor [ω, a] -> Tensor [ω, b] -> Tensor [ω, a, b]
@@ -213,7 +213,7 @@ outerWW xs ys = unsafePerformIO $ do
 {-# NOINLINE makeUpperProgram #-}
 makeUpperProgram :: KernelProgram '[TensorCL '[ω, n, n], MTensorCL '[ω, n, n]]
 makeUpperProgram = compile $ \ws us -> do
-  [u,i,j] <- traverse get_global_id [0,1,2]
+  ~[u,i,j] <- traverse get_global_id [0,1,2]
   us![u,i,j] .= fstep (castExpr i + 0.5) (castExpr j + 0.0) * ws![u,i,j]
 
 -- Zeros out entries of ws to make the result strictly upper triangular.
@@ -226,7 +226,7 @@ makeUpper ws = unsafePerformIO $ do
 {-# NOINLINE makeLowerProgram #-}
 makeLowerProgram :: KernelProgram '[TensorCL '[ω, n, n], MTensorCL '[ω, n, n]]
 makeLowerProgram = compile $ \ws us -> do
-  [u,i,j] <- traverse get_global_id [0,1,2]
+  ~[u,i,j] <- traverse get_global_id [0,1,2]
   us![u,i,j] .= fstep (castExpr j + 0.5) (castExpr i + 0.0) * ws![u,i,j]
 
 -- Zeros out entries of ws to make the result strictly lower triangular.

@@ -1,3 +1,4 @@
+{-# LANGUAGE NoStarIsType #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -58,7 +59,7 @@ conv2dForward :: KernelProgram '[Expr Int,
                                  TensorCL [iw, ih, c1],
                                  MTensorCL [ow, oh, c2]]
 conv2dForward = compile $ \pad flt input output -> do
-  [ox, oy, oc] <- traverse get_global_id [0, 1, 2]
+  ~[ox, oy, oc] <- traverse get_global_id [0, 1, 2]
   let
     [k, _, c1, c2] = dimsOf flt
     [iw, ih, _] = dimsOf input
@@ -90,7 +91,7 @@ conv2dBackward :: KernelProgram '[Expr Int,
                                   MTensorCL [iw, ih, c1],
                                   TensorCL [ow, oh, c2]]
 conv2dBackward = compile $ \pad flt d_input d_output -> do
-  [ix, iy, ic] <- traverse get_global_id [0, 1, 2]
+  ~[ix, iy, ic] <- traverse get_global_id [0, 1, 2]
   let
     [k, _, c1, c2] = dimsOf flt
     [iw, ih, _] = dimsOf d_input
@@ -119,7 +120,7 @@ conv2dFilter :: KernelProgram '[Expr Int,
                                 TensorCL [iw, ih, c1],
                                 TensorCL [ow, oh, c2]]
 conv2dFilter = compile $ \pad d_flt input d_output -> do
-  [kx, ky, ic, oc] <- get_global_id 0 >>= splitIndex (dimsOf d_flt)
+  ~[kx, ky, ic, oc] <- get_global_id 0 >>= splitIndex (dimsOf d_flt)
   let
     [iw, ih, _] = dimsOf input
     [ow, oh, _] = dimsOf d_output

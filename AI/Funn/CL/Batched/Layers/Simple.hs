@@ -44,7 +44,7 @@ import           AI.Funn.TypeLits
 {-# NOINLINE biasForwardProgram #-}
 biasForwardProgram :: KernelProgram '[TensorCL '[a], TensorCL '[ω, a], MTensorCL '[ω, a]]
 biasForwardProgram = compile $ \ws xs ys -> do
-  [u, i] <- traverse get_global_id [0,1]
+  ~[u, i] <- traverse get_global_id [0,1]
   ys![u,i] .= ws![i] + xs![u,i]
 
 biasForward :: (KnownNat ω, KnownNat (Prod ds)) => Tensor ds -> Tensor (ω ': ds) -> Tensor (ω ': ds)
@@ -90,7 +90,7 @@ quadForward xs ys = unsafePerformIO $ do
 {-# NOINLINE quadBackwardProgram #-}
 quadBackwardProgram :: KernelProgram '[TensorCL '[ω], TensorCL '[ω, a], TensorCL '[ω, a], MTensorCL '[ω, a], MTensorCL '[ω, a]]
 quadBackwardProgram = compile $ \dos xs ys dxs dys -> do
-  [u,i] <- traverse get_global_id [0,1]
+  ~[u,i] <- traverse get_global_id [0,1]
   d <- eval $ dos![u] * 2 * (xs![u,i] - ys![u,i])
   dxs![u,i] .= d
   dys![u,i] .= (-d)
