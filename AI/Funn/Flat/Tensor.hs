@@ -30,7 +30,6 @@ module AI.Funn.Flat.Tensor (
 
 import           Control.Applicative
 import           Control.DeepSeq
-import qualified Data.Binary as LB
 import qualified Data.Foldable as F
 import           Data.Foldable hiding (toList)
 import           Data.Monoid

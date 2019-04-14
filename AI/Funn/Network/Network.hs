@@ -26,7 +26,6 @@ import           Data.Monoid
 import           Data.Proxy
 
 import           Control.DeepSeq
-import qualified Data.Binary as B
 import           Data.Functor.Identity
 import           Data.Random
 import qualified Data.Vector.Generic as V

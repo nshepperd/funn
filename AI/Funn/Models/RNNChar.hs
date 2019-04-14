@@ -11,10 +11,11 @@
 {-# OPTIONS_GHC -fconstraint-solver-iterations=20 #-}
 module AI.Funn.Models.RNNChar (Model, ModelPars, ParsWrapped, buildModel, initialize, readPars, storePars) where
 
+import qualified Codec.CBOR.Decoding as C
+import qualified Codec.CBOR.Read as C
+import qualified Codec.CBOR.Write as C
+import qualified Codec.Serialise.Class as C
 import           Control.Monad.IO.Class
-import qualified Data.Binary as BL
-import qualified Data.Binary.Get as BL
-import qualified Data.Binary.Put as BL
 import qualified Data.ByteString.Lazy as BL
 import           Data.Constraint
 import           Data.Proxy
@@ -98,27 +99,23 @@ initialize size = case parDict size of
                         s1 <- Blob.generate (pure 0)
                         return (ModelPars p (s0, s1))
 
-storePars :: forall size. KnownNat size => FilePath -> ModelPars size -> IO ()
-storePars fname (ModelPars pars (s0, s1)) = BL.writeFile fname bs
-  where
-    bput = do BL.putInt64le size
-              BL.put pars
-              BL.put s0
-              BL.put s1
-    bs = BL.runPut bput
-    size = fromIntegral (natVal (Proxy @ size))
-    p = fromIntegral (natVal pars)
-
 data ParsWrapped = forall size. KnownNat size => ParsWrapped (ModelPars size)
 
+instance C.Serialise ParsWrapped where
+  encode (ParsWrapped (ModelPars p s0 :: ModelPars size)) =
+    C.encode (natVal (Proxy @ size), p, s0)
+  decode = do
+    3 <- C.decodeListLen
+    size <- C.decodeInteger
+    withNat size $ \(proxy :: Proxy size) -> do
+      case parDict proxy of
+        Dict -> do
+          p <- C.decode
+          s0 <- C.decode
+          return (ParsWrapped (ModelPars p s0 :: ModelPars size))
+
+storePars :: forall size. KnownNat size => FilePath -> ModelPars size -> IO ()
+storePars fname m = BL.writeFile fname (encodeToByteString (ParsWrapped m))
+
 readPars :: FilePath -> IO ParsWrapped
-readPars fname = BL.runGet bget <$> BL.readFile fname
-  where
-    bget = do size <- BL.getInt64le
-              withNat (fromIntegral size) $ \(psize :: Proxy size) -> do
-                case parDict psize of
-                  Dict -> do
-                    (pars :: Blob (Pars size)) <- BL.get
-                    (s0 :: Blob size) <- BL.get
-                    (s1 :: Blob size) <- BL.get
-                    return (ParsWrapped (ModelPars pars (s0,s1)))
+readPars fname = decodeOrError  <$> BL.readFile fname

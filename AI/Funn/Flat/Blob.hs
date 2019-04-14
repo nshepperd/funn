@@ -6,11 +6,11 @@ module AI.Funn.Flat.Blob (Blob(..), generate, split, cat,
                           fromList, toList, scale
                          ) where
 
+import qualified Codec.Serialise.Class as C
 import           Control.Applicative
 import           Control.DeepSeq
-import qualified Data.Binary as LB
-import           Data.Foldable hiding (toList)
 import qualified Data.Foldable as F
+import           Data.Foldable hiding (toList)
 import           Data.Monoid
 import           Data.Proxy
 import           Data.Random
@@ -84,9 +84,9 @@ instance Derivable (Blob n) where
 instance NFData (Blob n) where
   rnf (Blob v) = rnf v
 
-instance LB.Binary (Blob n) where
-  put xs = putVector putDouble (getBlob xs)
-  get = blob <$> getVector getDouble
+instance C.Serialise (Blob n) where
+  encode xs = C.encode (getBlob xs)
+  decode = blob <$> C.decode
 
 -- Functions --
 

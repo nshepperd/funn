@@ -17,7 +17,6 @@ import qualified Control.Monad.State.Lazy as SL
 import           Control.Category
 import           Control.Concurrent
 import           Control.DeepSeq
-import qualified Data.Binary as LB
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.ByteString.Lazy.Char8 as LC
@@ -217,8 +216,9 @@ train modelSize initialParameters input savefile logfile chunkSize learningRate 
                 when (i `mod` 100 == 0) $ do
                   case savefile of
                     Just savefile -> do
-                      LB.writeFile (printf "%s-%6.6i-%5.5f.bin" savefile i x) $ LB.encode (natVal modelSize, ParBox p)
-                      LB.writeFile (savefile ++ "-latest.bin") $ LB.encode (natVal modelSize, ParBox p)
+                      let encoded = encodeToByteString (natVal modelSize, ParBox p)
+                      LB.writeFile (printf "%s-%6.6i-%5.5f.bin" savefile i x) $ encoded
+                      LB.writeFile (savefile ++ "-latest.bin") $ encoded
                     Nothing -> return ()
                 m
 
@@ -270,12 +270,12 @@ main = do
         train proxy Nothing input savefile logfile chunkSize lr
 
     Train (Just resumepath) input savefile logfile chunkSize lr _ -> do
-      (modelSize, box) <- LB.decode <$> LB.readFile resumepath
+      (modelSize, box) <- decodeOrError <$> LB.readFile resumepath
       withNat modelSize $ \(proxy :: Proxy modelSize) ->
         train proxy box input savefile logfile chunkSize lr
 
     Sample initpath length -> do
-      (modelSize, box) <- LB.decode <$> LB.readFile initpath
+      (modelSize, box) <- decodeOrError <$> LB.readFile initpath
       let n = fromMaybe 500 length
       withNat modelSize $ \(proxy :: Proxy modelSize) ->
         case model proxy of
@@ -289,7 +289,7 @@ main = do
               Nothing -> error "model mismatch"
 
     Measure initpath inputpath -> do
-      (modelSize, box) <- LB.decode <$> LB.readFile initpath
+      (modelSize, box) <- decodeOrError <$> LB.readFile initpath
       text <- LB.readFile inputpath
       withNat modelSize $ \(proxy :: Proxy modelSize) ->
         case model proxy of

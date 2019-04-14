@@ -19,6 +19,9 @@ module Main where
 
 import           Prelude hiding ((.))
 
+import qualified Codec.CBOR.Read as C
+import qualified Codec.CBOR.Write as C
+import qualified Codec.Serialise.Class as C
 import           Control.Applicative
 import           Control.Category
 import           Control.Concurrent
@@ -27,7 +30,6 @@ import           Control.Monad
 import           Control.Monad.IO.Class
 import qualified Control.Monad.State.Lazy as SL
 import           Control.Monad.Trans
-import qualified Data.Binary as LB
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.ByteString.Lazy.Char8 as LC
@@ -238,8 +240,9 @@ train modelSize initialParameters input savefile logfile chunkSize learningRate 
         when (i `mod` 100 == 0) $ do
           case savefile of
             Just savefile -> do
-              LB.writeFile (printf "%s-%6.6i-%5.5f.bin" savefile i x) $ LB.encode (natVal modelSize, ParBox p)
-              LB.writeFile (savefile ++ "-latest.bin") $ LB.encode (natVal modelSize, ParBox p)
+              let encoded = encodeToByteString (natVal modelSize, ParBox p)
+              LB.writeFile (printf "%s-%6.6i-%5.5f.bin" savefile i x) $ encoded
+              LB.writeFile (savefile ++ "-latest.bin") $ encoded
             Nothing -> return ()
         m
 
@@ -300,7 +303,7 @@ main = do
         train proxy initial_par input savefile logfile chunkSize lr
 
     Train (Just resumepath) input savefile logfile chunkSize lr _ -> do
-      (modelSize, box) <- LB.decode <$> LB.readFile resumepath
+      (modelSize, box) <- decodeOrError <$> LB.readFile resumepath
       withNat modelSize $ \(proxy :: Proxy modelSize) ->
         case openParBox box of
           Just initial_par -> do
@@ -309,7 +312,7 @@ main = do
           Nothing -> error "model mismatch"
 
     Sample initpath length -> do
-      (modelSize, box) <- LB.decode <$> LB.readFile initpath
+      (modelSize, box) <- decodeOrError <$> LB.readFile initpath
       let n = fromMaybe 500 length
       withNat modelSize $ \(proxy :: Proxy modelSize) ->
         case openParBox box of
